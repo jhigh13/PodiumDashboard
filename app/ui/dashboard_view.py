@@ -6,13 +6,114 @@ from app.models.tables import Workout, DailyMetric
 from app.services.ingest import ingest_recent
 from app.services.tokens import get_token
 from app.services.athletes import get_or_create_demo_athlete, list_athletes, get_athlete_by_id
+from app.services.baseline import get_recent_alerts
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def _load_roster(roster_version: int):
+    """Cached roster lookup for coach mode selection."""
+    roster = list_athletes()
+    return [
+        {
+            "id": athlete.id,
+            "name": athlete.name,
+            "tp_athlete_id": athlete.tp_athlete_id,
+        }
+        for athlete in roster
+    ]
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def _load_metrics_range(athlete_id: int, start: date, end: date, version: int, order_desc: bool):
+    """Fetch daily metrics for a date range and cache results."""
+    order_clause = DailyMetric.date.desc() if order_desc else DailyMetric.date
+    with get_session() as session:
+        stmt = (
+            select(DailyMetric)
+            .where(DailyMetric.athlete_id == athlete_id)
+            .where(DailyMetric.date >= start)
+            .where(DailyMetric.date <= end)
+            .order_by(order_clause)
+        )
+        rows = session.execute(stmt).scalars().all()
+    return [
+        {
+            "date": row.date,
+            "rhr": row.rhr,
+            "hrv": row.hrv,
+            "sleep_hours": row.sleep_hours,
+            "body_score": row.body_score,
+            "ctl": row.ctl,
+            "atl": row.atl,
+            "tsb": row.tsb,
+        }
+        for row in rows
+    ]
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def _load_workouts_range(athlete_id: int, start: date, end: date, version: int):
+    """Fetch workouts for dashboard tables and cache results."""
+    with get_session() as session:
+        stmt = (
+            select(Workout)
+            .where(Workout.athlete_id == athlete_id)
+            .where(Workout.date >= start)
+            .where(Workout.date <= end)
+            .order_by(Workout.date.desc())
+        )
+        rows = session.execute(stmt).scalars().all()
+    return [
+        {
+            "date": row.date,
+            "sport": row.sport,
+            "duration_sec": row.duration_sec,
+            "tss": row.tss,
+            "intensity_factor": row.intensity_factor,
+        }
+        for row in rows
+    ]
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _load_recent_alerts_cached(athlete_id: int, days: int, version: int):
+    """Cached recent alerts for display."""
+    alerts = get_recent_alerts(athlete_id, days=days)
+    return [
+        {
+            "alert_date": alert.alert_date,
+            "message": alert.message,
+            "severity": alert.severity,
+            "metric_name": alert.metric_name,
+            "alert_type": alert.alert_type,
+        }
+        for alert in alerts
+    ]
+
+
+def _invalidate_data_caches():
+    """Increment data version and clear cached data payloads."""
+    st.session_state.setdefault("data_version", 0)
+    st.session_state["data_version"] += 1
+    _load_metrics_range.clear()
+    _load_workouts_range.clear()
+    _load_recent_alerts_cached.clear()
+
+
+def _invalidate_roster_cache():
+    """Increment roster version to refresh cached roster."""
+    st.session_state.setdefault("roster_version", 0)
+    st.session_state["roster_version"] += 1
+    _load_roster.clear()
+
+
 def render():
     st.header("Athlete Dashboard")
+    st.session_state.setdefault("data_version", 0)
+    st.session_state.setdefault("roster_version", 0)
     # Coach mode: allow selecting athlete
     mode = st.sidebar.radio("Mode", ["Athlete", "Coach"], horizontal=True)
     athlete = get_or_create_demo_athlete()
@@ -30,25 +131,24 @@ def render():
                 if summary.get('athletes'):
                     with st.sidebar.expander("Sample (up to 10)", expanded=False):
                         st.sidebar.json(summary['athletes'])
-                # Refresh roster in-place without forcing a full rerun
-                # so the dropdown picks up new entries immediately.
-                # We'll re-query roster below after this block.
+                _invalidate_roster_cache()
             except RuntimeError as e:
                 st.sidebar.error(str(e))
             except Exception as e:  # noqa: BLE001
                 st.sidebar.error(f"Roster fetch failed: {e}")
 
-        roster = list_athletes()
-        if not roster:
+        roster_data = _load_roster(st.session_state["roster_version"])
+        if not roster_data:
             st.sidebar.info("No athletes in roster yet. The app will use the demo athlete until a roster is synced.")
         else:
             display = [
-                f"{a.name or 'Unnamed'} (id:{a.id}{' TP:'+str(a.tp_athlete_id) if a.tp_athlete_id else ''})"
-                for a in roster
+                f"{entry['name'] or 'Unnamed'} (id:{entry['id']}{' TP:'+str(entry['tp_athlete_id']) if entry['tp_athlete_id'] else ''})"
+                for entry in roster_data
             ]
             selection = st.sidebar.selectbox("Select Athlete", options=display, index=0)
             selected_idx = display.index(selection)
-            athlete = roster[selected_idx]
+            athlete_id = roster_data[selected_idx]["id"]
+            athlete = get_athlete_by_id(athlete_id)
     # TrainingPeaks has a 45-day maximum for single API calls
     days = st.sidebar.slider("Days", min_value=3, max_value=45, value=7)
     
@@ -61,6 +161,7 @@ def render():
             with st.spinner("Fetching 365 days of data (9 segments, 45-day chunks)..."):
                 # 9 segments = ~40 days each, staying within TP's 45-day limit
                 summary = ingest_historical_full(days_back=365, athlete_id=athlete.id, segments=9)
+            _invalidate_data_caches()
             st.sidebar.success(
                 f"✅ Complete! {summary['metrics_saved']} metrics saved, {summary['workouts_inserted']} workouts inserted"
             )
@@ -134,21 +235,24 @@ def render():
             st.warning("⚠️ Need more historical data. Run 'Sync Last 365 Days' first.")
     
     # Display recent alerts
-    from app.services.baseline import get_recent_alerts
-    recent_alerts = get_recent_alerts(athlete.id, days=7)
+    recent_alerts = _load_recent_alerts_cached(
+        athlete.id,
+        days=7,
+        version=st.session_state["data_version"],
+    )
     if recent_alerts:
         st.markdown("### 🔔 Recent Alerts")
         for alert in recent_alerts[:5]:  # Show top 5
-            severity_emoji = {"green": "🟢", "yellow": "🟡", "red": "🔴"}.get(alert.severity, "⚪")
-            st.markdown(f"{severity_emoji} **{alert.alert_date}**: {alert.message}")
+            severity_emoji = {"green": "🟢", "yellow": "🟡", "red": "🔴"}.get(alert["severity"], "⚪")
+            st.markdown(f"{severity_emoji} **{alert['alert_date']}**: {alert['message']}")
         with st.expander("View All Alerts"):
             alert_data = [
                 {
-                    "Date": a.alert_date,
-                    "Metric": a.metric_name.upper(),
-                    "Type": a.alert_type,
-                    "Severity": a.severity,
-                    "Message": a.message,
+                    "Date": a["alert_date"],
+                    "Metric": a["metric_name"].upper(),
+                    "Type": a["alert_type"],
+                    "Severity": a["severity"],
+                    "Message": a["message"],
                 }
                 for a in recent_alerts
             ]
@@ -162,27 +266,20 @@ def render():
     chart_end = date.today()
     chart_start = chart_end - timedelta(days=365)
     
-    with get_session() as session:
-        chart_stmt = (
-            select(DailyMetric)
-            .where(DailyMetric.athlete_id == athlete.id)
-            .where(DailyMetric.date >= chart_start)
-            .where(DailyMetric.date <= chart_end)
-            .order_by(DailyMetric.date)
-        )
-        chart_metrics = session.scalars(chart_stmt).all()
-    
+    chart_metrics = _load_metrics_range(
+        athlete.id,
+        chart_start,
+        chart_end,
+        st.session_state["data_version"],
+        order_desc=False,
+    )
+
     if chart_metrics and len(chart_metrics) >= 7:
         # Create dataframe for rolling calculations
-        df = pd.DataFrame([
-            {
-                'date': m.date,
-                'hrv': m.hrv,
-                'rhr': m.rhr,
-                'sleep': m.sleep_hours
-            }
-            for m in chart_metrics
-        ])
+        df = pd.DataFrame(chart_metrics)
+        if 'sleep_hours' in df.columns:
+            df['sleep'] = df['sleep_hours']
+        df.sort_values('date', inplace=True)
         
         # Debug: Show data summary
         with st.expander("🔍 Chart Data Debug", expanded=False):
@@ -321,6 +418,7 @@ def render():
         try:
             with st.spinner("Syncing..."):
                 result = ingest_recent(days=days, athlete_id=athlete.id)
+            _invalidate_data_caches()
             st.success("✅ Sync complete!")
             with st.expander("🔍 Sync Details", expanded=True):
                 st.write("**Date Range:**", f"{result.get('range', 'unknown')} ({result.get('range_days', '?')} days)")
@@ -349,16 +447,8 @@ def render():
     end = date.today()
     start = end - timedelta(days=days-1)
 
-    with get_session() as session:
-        w_stmt = select(Workout).where(Workout.athlete_id == athlete.id, Workout.date >= start, Workout.date <= end).order_by(Workout.date.desc())
-        workouts = session.execute(w_stmt).scalars().all()
-        # Get all metrics in date range, not just latest
-        m_stmt = select(DailyMetric).where(
-            DailyMetric.athlete_id == athlete.id,
-            DailyMetric.date >= start,
-            DailyMetric.date <= end
-        ).order_by(DailyMetric.date.desc())
-        metrics = session.execute(m_stmt).scalars().all()
+    workouts = _load_workouts_range(athlete.id, start, end, st.session_state["data_version"])
+    metrics = _load_metrics_range(athlete.id, start, end, st.session_state["data_version"], order_desc=True)
 
     col1, col2 = st.columns(2)
     with col1:
