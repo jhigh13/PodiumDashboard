@@ -193,6 +193,22 @@ class TrainingPeaksAPI:
         r.raise_for_status()
         return r.json() or []
 
+    def fetch_workout_details(self, workout_id: str, tp_athlete_id: int | None = None):
+        if not workout_id:
+            return None
+        if tp_athlete_id:
+            url = f"{API_BASE}/v2/workouts/{tp_athlete_id}/{workout_id}"
+        else:
+            url = f"{API_BASE}/v2/workouts/{workout_id}"
+        r = requests.get(url, headers=self._headers(), timeout=30)
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        try:
+            return r.json()
+        except ValueError:
+            return None
+
 
 def get_api(athlete_id: int | None = None):
     """Return an API client bound to a specific athlete id.

@@ -4,6 +4,7 @@ from sqlalchemy import select, delete
 from app.data.db import get_session
 from app.models.tables import DailyMetric, BaselineMetric, MetricAlert
 import statistics
+from app.utils.dates import get_effective_today
 
 
 METRIC_CONFIGS = {
@@ -44,10 +45,12 @@ def calculate_baselines(athlete_id: int, end_date: date | None = None):
         dict with baseline summary
     """
     if end_date is None:
-        end_date = date.today()
+        end_date = get_effective_today()
     
     windows = {
         "annual": 365,
+        "semiannual": 180,
+        "quarterly": 90,
         "monthly": 30,
         "weekly": 7,
     }

@@ -290,9 +290,14 @@ class Block(google.protobuf.message.Message):
     class TabContainer(google.protobuf.message.Message):
         DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
+        DEFAULT_TAB_INDEX_FIELD_NUMBER: builtins.int
+        default_tab_index: builtins.int
         def __init__(
             self,
+            *,
+            default_tab_index: builtins.int = ...,
         ) -> None: ...
+        def ClearField(self, field_name: typing.Literal["default_tab_index", b"default_tab_index"]) -> None: ...
 
     @typing.final
     class Tab(google.protobuf.message.Message):

@@ -4,6 +4,7 @@ import time
 
 from authlib.common.security import generate_token
 from authlib.consts import default_json_headers
+from authlib.deprecate import deprecate
 from authlib.jose import JoseError
 from authlib.jose import JsonWebToken
 
@@ -41,7 +42,7 @@ class ClientRegistrationEndpoint:
         request.credential = token
 
         client_metadata = self.extract_client_metadata(request)
-        client_info = self.generate_client_info()
+        client_info = self.generate_client_info(request)
         body = {}
         body.update(client_metadata)
         body.update(client_info)
@@ -91,10 +92,28 @@ class ClientRegistrationEndpoint:
         except JoseError as exc:
             raise InvalidSoftwareStatementError() from exc
 
-    def generate_client_info(self):
+    def generate_client_info(self, request):
         # https://tools.ietf.org/html/rfc7591#section-3.2.1
-        client_id = self.generate_client_id()
-        client_secret = self.generate_client_secret()
+        try:
+            client_id = self.generate_client_id(request)
+        except TypeError:  # pragma: no cover
+            client_id = self.generate_client_id()
+            deprecate(
+                "generate_client_id takes a 'request' parameter. "
+                "It will become mandatory in coming releases",
+                version="1.8",
+            )
+
+        try:
+            client_secret = self.generate_client_secret(request)
+        except TypeError:  # pragma: no cover
+            client_secret = self.generate_client_secret()
+            deprecate(
+                "generate_client_secret takes a 'request' parameter. "
+                "It will become mandatory in coming releases",
+                version="1.8",
+            )
+
         client_id_issued_at = int(time.time())
         client_secret_expires_at = 0
         return dict(
@@ -114,13 +133,13 @@ class ClientRegistrationEndpoint:
     def create_endpoint_request(self, request):
         return self.server.create_json_request(request)
 
-    def generate_client_id(self):
+    def generate_client_id(self, request):
         """Generate ``client_id`` value. Developers MAY rewrite this method
         to use their own way to generate ``client_id``.
         """
         return generate_token(42)
 
-    def generate_client_secret(self):
+    def generate_client_secret(self, request):
         """Generate ``client_secret`` value. Developers MAY rewrite this method
         to use their own way to generate ``client_secret``.
         """

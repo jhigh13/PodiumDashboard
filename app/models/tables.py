@@ -121,3 +121,18 @@ class AthleteSurvey(Base):
     race_excitement = Column(Integer)  # 1-5 scale
     notes = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class WorkoutCompliance(Base):
+    __tablename__ = 'workout_compliance'
+    id = Column(Integer, primary_key=True)
+    workout_id = Column(Integer, ForeignKey('workouts.id', ondelete='CASCADE'), unique=True, index=True)
+    athlete_id = Column(Integer, ForeignKey('athletes.id', ondelete='CASCADE'), index=True)
+    workout_date = Column(Date, index=True)
+    sport = Column(String(50))
+    planned_summary = Column(JSON)
+    actual_summary = Column(JSON)
+    metrics = Column(JSON)
+    overall_score = Column(Float)
+    evaluation_notes = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

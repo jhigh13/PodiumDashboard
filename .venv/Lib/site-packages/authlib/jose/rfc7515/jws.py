@@ -34,6 +34,8 @@ class JsonWebSignature:
         ]
     )
 
+    MAX_CONTENT_LENGTH: int = 256000
+
     #: Defined available JWS algorithms in the registry
     ALGORITHMS_REGISTRY = {}
 
@@ -89,6 +91,9 @@ class JsonWebSignature:
 
         .. _`Section 7.1`: https://tools.ietf.org/html/rfc7515#section-7.1
         """
+        if len(s) > self.MAX_CONTENT_LENGTH:
+            raise ValueError("Serialization is too long.")
+
         try:
             s = to_bytes(s)
             signing_input, signature_segment = s.rsplit(b".", 1)

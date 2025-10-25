@@ -1,10 +1,14 @@
 from datetime import date, timedelta, datetime
-from sqlalchemy import select, delete, update
+from sqlalchemy import select, delete
 from app.data.db import get_session
 from app.models.tables import Workout, DailyMetric
 from app.services.tp_api import get_api
 from app.services.tokens import get_token as _get_token, find_coach_token as _find_coach_token
 from app.services.athletes import get_or_create_demo_athlete, get_athlete_by_id
+from app.services.baseline import calculate_baselines
+from app.services.recovery_alerts import evaluate_recovery_alert
+from app.utils.dates import get_effective_today
+from app.services.compliance import upsert_workout_compliance, get_compliance_for_day
 
 
 def _coerce_date(value):
@@ -28,7 +32,8 @@ def _coerce_date(value):
 def ingest_recent(days: int = 7, athlete_id: int | None = None):
     athlete = get_athlete_by_id(athlete_id) if athlete_id else get_or_create_demo_athlete()
     api = get_api(athlete.id)
-    end = date.today()
+    days = max(days, 1)
+    end = get_effective_today()
     start = end - timedelta(days=days - 1)
     tp_athlete_id = getattr(athlete, 'tp_athlete_id', None)
     # If we're using a coach token and no tp_athlete_id is set, we cannot fetch
@@ -42,6 +47,9 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
     stored = 0
     duplicates = 0
     sample_workout_ids = []
+    plan_cache: dict[str, dict | None] = {}
+    compliance_updates: list[dict[str, object]] = []
+
     with get_session() as session:
         for idx, w in enumerate(workouts):
             if idx == 0:
@@ -65,34 +73,60 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
                 continue
             # Check existing
             stmt = select(Workout).where(Workout.tp_workout_id == workout_id)
-            if session.execute(stmt).scalars().first():
+            existing_record = session.execute(stmt).scalars().first()
+            is_new_record = existing_record is None
+
+            if is_new_record:
+                # Duration: prefer TotalTime (seconds?) else TotalTimePlanned; if looks like hours convert
+                raw_total = w.get('TotalTime') or w.get('TotalTimePlanned') or w.get('TotalTimePlannedSeconds')
+                duration_sec = 0
+                if raw_total is not None:
+                    try:
+                        val = float(raw_total)
+                        # Heuristic: if val < 20 assume hours, else assume seconds (many APIs use seconds; adjust if wrong later)
+                        duration_sec = int(val * 3600) if val < 20 else int(val)
+                    except Exception:  # noqa: BLE001
+                        duration_sec = 0
+                tss_val = w.get('tss') or w.get('TssActual') or w.get('TSSActual') or w.get('TssPlanned')
+                if_val = w.get('intensityFactor') or w.get('IF') or w.get('If')
+                date_field = w.get('workoutDay') or w.get('WorkoutDay') or w.get('Date')
+                record = Workout(
+                    athlete_id=athlete.id,
+                    tp_workout_id=workout_id,
+                    date=_coerce_date(date_field),
+                    sport=w.get('sportType') or w.get('sport') or w.get('WorkoutType'),
+                    duration_sec=duration_sec,
+                    tss=tss_val,
+                    intensity_factor=if_val,
+                    raw_json=w,
+                )
+                session.add(record)
+                session.flush()  # ensure record.id populated for compliance linkage
+                stored += 1
+            else:
                 duplicates += 1
-                continue
-            # Duration: prefer TotalTime (seconds?) else TotalTimePlanned; if looks like hours convert
-            raw_total = w.get('TotalTime') or w.get('TotalTimePlanned') or w.get('TotalTimePlannedSeconds')
-            duration_sec = 0
-            if raw_total is not None:
-                try:
-                    val = float(raw_total)
-                    # Heuristic: if val < 20 assume hours, else assume seconds (many APIs use seconds; adjust if wrong later)
-                    duration_sec = int(val * 3600) if val < 20 else int(val)
-                except Exception:  # noqa: BLE001
-                    duration_sec = 0
-            tss_val = w.get('tss') or w.get('TssActual') or w.get('TSSActual') or w.get('TssPlanned')
-            if_val = w.get('intensityFactor') or w.get('IF') or w.get('If')
-            date_field = w.get('workoutDay') or w.get('WorkoutDay') or w.get('Date')
-            record = Workout(
-                athlete_id=athlete.id,
-                tp_workout_id=workout_id,
-                date=_coerce_date(date_field),
-                sport=w.get('sportType') or w.get('sport') or w.get('WorkoutType'),
-                duration_sec=duration_sec,
-                tss=tss_val,
-                intensity_factor=if_val,
-                raw_json=w,
-            )
-            session.add(record)
-            stored += 1
+                record = existing_record
+                # Update raw payload for existing entries so compliance has latest data
+                record.raw_json = w or record.raw_json
+
+            plan_data = None
+            if workout_id:
+                if workout_id not in plan_cache:
+                    try:
+                        plan_cache[workout_id] = api.fetch_workout_details(workout_id, tp_athlete_id=tp_athlete_id)
+                    except Exception:  # noqa: BLE001
+                        plan_cache[workout_id] = None
+                plan_data = plan_cache[workout_id]
+
+            compliance_summary = upsert_workout_compliance(session, record, plan_data)
+            if compliance_summary:
+                compliance_updates.append({
+                    "workout_id": workout_id,
+                    "sport": record.sport,
+                    "date": record.date.isoformat() if record.date else None,
+                    "overall_score": compliance_summary.get("overall_score"),
+                    "notes": compliance_summary.get("notes"),
+                })
         session.commit()
 
     # Persist tp_athlete_id if missing but present in workouts
@@ -164,6 +198,10 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
                 metrics_saved += 1
                 metrics_dates_saved.append(metric_date.isoformat())
 
+    baseline_summary = calculate_baselines(athlete.id, end_date=end)
+    alert_result = evaluate_recovery_alert(athlete.id, check_date=end)
+    latest_compliance = get_compliance_for_day(athlete.id, end)
+
     return {
         "tp_athlete_id": tp_athlete_id,
         "used_coach_token": bool(_find_coach_token() and not _get_token(athlete.id)),
@@ -180,6 +218,10 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
         "metrics_dates_saved": sorted(metrics_dates_saved),  # Show which specific dates were saved
         "metrics_raw_sample": metrics_raw_sample,
         "metric_field_names": sorted(list(metric_field_names)),
+        "baseline_summary": baseline_summary,
+        "recovery_alert": alert_result,
+        "compliance_updates": compliance_updates,
+    "latest_compliance": latest_compliance,
         "note": "Duration heuristic: <20 treated as hours else seconds; Metrics: check field_names for API structure"
     }
 
@@ -194,7 +236,7 @@ def ingest_historical_full(days_back: int = 365, athlete_id: int | None = None, 
     """
     athlete = get_athlete_by_id(athlete_id) if athlete_id else get_or_create_demo_athlete()
     api = get_api(athlete.id)
-    end_date = date.today()
+    end_date = get_effective_today()
     start_date = end_date - timedelta(days=days_back)
     tp_athlete_id = getattr(athlete, 'tp_athlete_id', None)
     if not _get_token(athlete.id) and _find_coach_token() and not tp_athlete_id:
@@ -331,7 +373,7 @@ def ingest_historical(days_back: int = 365, chunk_size: int = 30, athlete_id: in
     api = get_api(athlete.id)
     tp_athlete_id = getattr(athlete, 'tp_athlete_id', None)
     
-    end_date = date.today()
+    end_date = get_effective_today()
     start_date = end_date - timedelta(days=days_back)
     
     total_workouts = 0

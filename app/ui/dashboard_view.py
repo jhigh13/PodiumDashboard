@@ -7,6 +7,8 @@ from app.services.ingest import ingest_recent
 from app.services.tokens import get_token
 from app.services.athletes import get_or_create_demo_athlete, list_athletes, get_athlete_by_id
 from app.services.baseline import get_recent_alerts
+from app.services import compliance as compliance_service
+from app.utils.dates import get_effective_today
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
@@ -94,6 +96,30 @@ def _load_recent_alerts_cached(athlete_id: int, days: int, version: int):
     ]
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_compliance_snapshot(athlete_id: int, day: date, version: int):
+    """Fetch workout compliance summary for a specific day."""
+    return compliance_service.get_compliance_for_day(athlete_id, day)
+
+
+def _format_metric_value(value, unit: str | None) -> str:
+    if value is None or value == "" or value == "—":
+        return "—"
+    if isinstance(value, (int, float)):
+        if unit in {"yards", "yard", "yd"}:
+            return f"{int(round(value))}"
+        if unit in {"miles", "mi"}:
+            return f"{value:.2f}".rstrip("0").rstrip(".")
+        if unit in {"min"}:
+            return f"{value:.1f}"
+        if unit == "mph":
+            return f"{value:.1f}"
+        if unit in {"W", "watts"}:
+            return f"{int(round(value))}"
+        return f"{value:.2f}".rstrip("0").rstrip(".")
+    return str(value)
+
+
 def _invalidate_data_caches():
     """Increment data version and clear cached data payloads."""
     st.session_state.setdefault("data_version", 0)
@@ -149,6 +175,7 @@ def render():
             selected_idx = display.index(selection)
             athlete_id = roster_data[selected_idx]["id"]
             athlete = get_athlete_by_id(athlete_id)
+    effective_today = get_effective_today()
     # TrainingPeaks has a 45-day maximum for single API calls
     days = st.sidebar.slider("Days", min_value=3, max_value=45, value=7)
     
@@ -230,7 +257,7 @@ def render():
                             "Std Dev": f"{stats['std_dev']:.2f}",
                             "Samples": stats['sample_count']
                         })
-                    st.dataframe(baseline_table, hide_index=True, use_container_width=True)
+                    st.dataframe(baseline_table, hide_index=True, width="stretch")
         else:
             st.warning("⚠️ Need more historical data. Run 'Sync Last 365 Days' first.")
     
@@ -258,12 +285,70 @@ def render():
             ]
             st.dataframe(alert_data, hide_index=True, width="stretch")
     
+    compliance_snapshot = _load_compliance_snapshot(
+        athlete.id,
+        effective_today,
+        st.session_state["data_version"],
+    )
+
+    st.markdown("### 🧭 Workout Compliance")
+    compliance_records = (compliance_snapshot or {}).get("records") if compliance_snapshot else None
+    if compliance_records:
+        requested_date = compliance_snapshot.get("requested_date")
+        record_date = compliance_snapshot.get("workout_date")
+        matched_exact = compliance_snapshot.get("is_exact_match", True)
+
+        if not matched_exact and requested_date and record_date:
+            st.caption(
+                f"Showing the most recent stored evaluations ({record_date}) because no compliance data exists for {requested_date}."
+            )
+
+        for idx, record in enumerate(compliance_records):
+            sport_display = (record.get("sport") or "–").title()
+            score_val = record.get("overall_score")
+            score_display = f"{score_val:.0f}" if isinstance(score_val, (int, float)) else "—"
+            notes_display = record.get("notes") or ""
+
+            colc1, colc2 = st.columns([1, 1])
+            with colc1:
+                st.metric("Date", record.get("workout_date") or record_date or requested_date)
+                st.metric("Sport", sport_display)
+            with colc2:
+                st.metric("Score", score_display)
+                if notes_display:
+                    st.caption(f"Notes: {notes_display}")
+
+            metrics_rows = record.get("metrics") or []
+            if metrics_rows:
+                table = []
+                for row in metrics_rows:
+                    unit = row.get("unit") or ""
+                    table.append(
+                        {
+                            "Metric": row.get("metric", "").title(),
+                            "Planned": _format_metric_value(row.get("planned"), unit),
+                            "Actual": _format_metric_value(row.get("actual"), unit),
+                            "Unit": unit,
+                            "Rating": (row.get("rating") or "—").title() if row.get("rating") else "—",
+                        }
+                    )
+                st.dataframe(table, hide_index=True, width="stretch")
+            else:
+                st.info("No evaluatable metrics recorded for this workout yet.")
+
+            if idx < len(compliance_records) - 1:
+                st.markdown("---")
+    else:
+        st.info(
+            "No workout compliance summary for the selected day. Sync to fetch the latest workout plan and results."
+        )
+
     # Recovery Metrics Trend Charts
     st.markdown("---")
     st.subheader("📈 Recovery Metrics Trends")
     
     # Fetch metrics data for charts (365 days for rolling calculations)
-    chart_end = date.today()
+    chart_end = effective_today
     chart_start = chart_end - timedelta(days=365)
     
     chart_metrics = _load_metrics_range(
@@ -290,7 +375,7 @@ def render():
             st.write(f"**Sleep values:** {df['sleep'].notna().sum()} non-null out of {len(df)}")
             st.write(f"**HRV range:** {df['hrv'].min():.1f} - {df['hrv'].max():.1f}" if df['hrv'].notna().any() else "**HRV range:** No data")
             st.write(f"**RHR range:** {df['rhr'].min():.1f} - {df['rhr'].max():.1f}" if df['rhr'].notna().any() else "**RHR range:** No data")
-            st.dataframe(df.tail(10), use_container_width=True)
+            st.dataframe(df.tail(10), width="stretch")
         
         # Calculate rolling averages
         df['hrv_7d'] = df['hrv'].rolling(window=7, min_periods=1).mean()
@@ -363,7 +448,7 @@ def render():
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         
-        st.plotly_chart(fig_hrv, use_container_width=True)
+        st.plotly_chart(fig_hrv, width="stretch")
         
         # Chart 2: Resting Heart Rate with Sleep
         fig_rhr = make_subplots(specs=[[{"secondary_y": True}]])
@@ -408,7 +493,7 @@ def render():
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         
-        st.plotly_chart(fig_rhr, use_container_width=True)
+        st.plotly_chart(fig_rhr, width="stretch")
         
     else:
         st.info("📊 Need at least 7 days of metrics data to display trend charts. Run 'Sync Last 365 Days' to populate historical data.")
@@ -434,6 +519,35 @@ def render():
                     st.write("**API Metric Fields:**", ", ".join(result.get('metric_field_names', [])))
                 if result.get('metrics_raw_sample'):
                     st.json(result.get('metrics_raw_sample', []))
+
+                baseline_summary = result.get('baseline_summary') or {}
+                if baseline_summary:
+                    metrics_list = ", ".join(sorted(baseline_summary.keys())) or "none"
+                    st.write(f"**Baselines updated for:** {metrics_list}")
+
+                alert_info = result.get('recovery_alert') or {}
+                if alert_info:
+                    if alert_info.get('triggered'):
+                        reason = alert_info.get('reason', 'triggered')
+                        st.success(f"🚨 Recovery alert triggered ({reason.replace('_', ' ')}) and dispatched")
+                    else:
+                        st.info(f"Recovery alert check: {alert_info.get('reason', 'no alert')}")
+
+                latest_compliance = result.get('latest_compliance') or {}
+                compliance_records = latest_compliance.get('records') or []
+                if compliance_records:
+                    primary = compliance_records[0]
+                    score_val = primary.get('overall_score')
+                    display_date = primary.get('workout_date') or latest_compliance.get('workout_date') or latest_compliance.get('requested_date')
+                    if score_val is not None:
+                        st.write("**Latest compliance score:**", f"{score_val:.0f} (date: {display_date})")
+                    if primary.get('notes'):
+                        st.write("**Notes:**", primary['notes'])
+                    if not latest_compliance.get('is_exact_match', True) and latest_compliance.get('requested_date'):
+                        st.caption(
+                            f"Compliance fell back to {latest_compliance.get('workout_date')} "
+                            f"because nothing was stored for {latest_compliance['requested_date']}"
+                        )
         except RuntimeError as e:
             msg = str(e)
             if "No OAuth token" in msg:
@@ -444,7 +558,7 @@ def render():
             else:
                 st.error(msg)
 
-    end = date.today()
+    end = effective_today
     start = end - timedelta(days=days-1)
 
     workouts = _load_workouts_range(athlete.id, start, end, st.session_state["data_version"])
@@ -458,11 +572,11 @@ def render():
         else:
             data = [
                 {
-                    "Date": w.date,
-                    "Sport": w.sport,
-                    "Dur (min)": round((w.duration_sec or 0)/60, 1),
-                    "TSS": w.tss,
-                    "IF": w.intensity_factor,
+                    "Date": w["date"],
+                    "Sport": w["sport"],
+                    "Dur (min)": round(((w.get("duration_sec") or 0)/60), 1),
+                    "TSS": w.get("tss"),
+                    "IF": w.get("intensity_factor"),
                 }
                 for w in workouts
             ]
@@ -476,26 +590,26 @@ def render():
             latest = metrics[0]
             col2a, col2b = st.columns(2)
             with col2a:
-                st.metric("RHR", latest.rhr if latest.rhr else "—")
-                st.metric("HRV", latest.hrv if latest.hrv else "—")
-                st.metric("Sleep (h)", latest.sleep_hours if latest.sleep_hours else "—")
+                st.metric("RHR", latest.get("rhr") if latest.get("rhr") else "—")
+                st.metric("HRV", latest.get("hrv") if latest.get("hrv") else "—")
+                st.metric("Sleep (h)", latest.get("sleep_hours") if latest.get("sleep_hours") else "—")
             with col2b:
-                st.metric("CTL", latest.ctl if latest.ctl else "—")
-                st.metric("ATL", latest.atl if latest.atl else "—")
-                st.metric("TSB", latest.tsb if latest.tsb else "—")
+                st.metric("CTL", latest.get("ctl") if latest.get("ctl") else "—")
+                st.metric("ATL", latest.get("atl") if latest.get("atl") else "—")
+                st.metric("TSB", latest.get("tsb") if latest.get("tsb") else "—")
             
             # Show all metrics in table
             if len(metrics) > 1:
                 st.caption(f"Showing {len(metrics)} metric entries")
                 metric_data = [
                     {
-                        "Date": m.date,
-                        "RHR": m.rhr,
-                        "HRV": m.hrv,
-                        "Sleep": m.sleep_hours,
-                        "CTL": m.ctl,
-                        "ATL": m.atl,
-                        "TSB": m.tsb,
+                        "Date": m["date"],
+                        "RHR": m.get("rhr"),
+                        "HRV": m.get("hrv"),
+                        "Sleep": m.get("sleep_hours"),
+                        "CTL": m.get("ctl"),
+                        "ATL": m.get("atl"),
+                        "TSB": m.get("tsb"),
                     }
                     for m in metrics
                 ]

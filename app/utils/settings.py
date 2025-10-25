@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     sendgrid_api_key: str = Field("", alias="SENDGRID_API_KEY")
     head_coach_email: str = Field("john.high@usatriathlon.org", alias="HEAD_COACH_EMAIL")
     daily_job_time: str = Field("07:30", alias="DAILY_JOB_TIME")
+    sandbox_current_day_offset: int = Field(0, alias="SANDBOX_CURRENT_DAY_OFFSET")
 
     class Config:
         case_sensitive = False
