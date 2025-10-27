@@ -10,7 +10,7 @@ MVP Streamlit application to ingest TrainingPeaks data, compute recovery / risk 
 - Email summary to head coach
 
 ## Tech Stack
-Python, Streamlit, Authlib, SQLAlchemy, Postgres (Supabase), APScheduler, SendGrid.
+Python, Streamlit, Authlib, SQLAlchemy, Postgres (Supabase), APScheduler, Resend.
 
 ## Quick Start
 1. Copy `.env.example` to `.env` and fill in secrets (TrainingPeaks client id/secret + DATABASE_URL).

@@ -127,6 +127,7 @@ def _invalidate_data_caches():
     _load_metrics_range.clear()
     _load_workouts_range.clear()
     _load_recent_alerts_cached.clear()
+    _load_compliance_snapshot.clear()
 
 
 def _invalidate_roster_cache():
