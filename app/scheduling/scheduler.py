@@ -5,6 +5,9 @@ import pytz
 from app.services.ingest import ingest_recent
 from app.services.athletes import list_athletes
 from app.services.recovery_alerts import evaluate_recovery_alert
+from app.services.compliance import get_compliance_for_day
+from app.services.llm import llm_client
+from app.services.email import email_client
 from app.utils.dates import get_effective_today
 
 scheduler = BackgroundScheduler(timezone=pytz.timezone('America/Denver'))
@@ -26,11 +29,11 @@ def daily_job():
     Daily automated job that runs at the scheduled time.
     
     This job:
-    1. Ingests recent data from TrainingPeaks (21 days to account for sandbox offset)
-    2. Evaluates recovery alerts for all athletes
-    
-    Note: Uses SANDBOX_CURRENT_DAY_OFFSET to handle sandbox environment's date lag.
-    When offset=10, "today" is treated as 10 days ago. Set to 0 for production.
+    1. Ingests the latest day's data from TrainingPeaks.
+    2. Evaluates recovery alerts (without sending default emails).
+    3. Checks workout compliance.
+    4. Generates a daily summary using LLM.
+    5. Sends the summary email.
     """
     timestamp = datetime.now().isoformat()
     print(f"\n{'='*60}")
@@ -46,44 +49,64 @@ def daily_job():
     print(f"  Actual today: {actual_today}")
     print(f"  Sandbox offset: {offset} days")
     print(f"  Effective 'today': {effective_today}")
-    print(f"  Ingesting: 21 days (ensures full coverage with offset)")
+    print(f"  Ingesting: 1 day (latest)")
     
-    # Step 1: Ingest recent data (21 days to ensure we have enough historical data)
-    print("\n[1/2] Ingesting recent data from TrainingPeaks...")
-    ingest_result = ingest_recent(days=21)
-    print(f"  ✓ Ingestion result: {ingest_result}")
+    # Step 1: Ingest recent data (1 day)
+    print("\n[1/3] Ingesting latest data from TrainingPeaks...")
+    try:
+        ingest_result = ingest_recent(days=1)
+        print(f"  ✓ Ingestion result: {ingest_result}")
+    except Exception as e:
+        print(f"  ✗ Ingestion failed: {e}")
+        ingest_result = {"error": str(e)}
     
-    # Step 2: Evaluate recovery alerts for all athletes
-    print("\n[2/2] Evaluating recovery alerts for all athletes...")
+    # Step 2: Evaluate and Process for each athlete
+    print("\n[2/3] Processing athletes (Recovery + Compliance + LLM)...")
     athletes = list_athletes()
-    check_date = get_effective_today()
     
     if not athletes:
         print("  ℹ No athletes found in database")
     else:
         print(f"  Found {len(athletes)} athlete(s)")
         
-        alert_count = 0
         for athlete in athletes:
+            print(f"\n  👤 Processing: {athlete.name} (ID: {athlete.id})")
             try:
-                result = evaluate_recovery_alert(
+                # A. Recovery Alert (suppress default email)
+                recovery_result = evaluate_recovery_alert(
                     athlete_id=athlete.id,
-                    check_date=check_date,
-                    threshold=0.05,  # 5% threshold
+                    check_date=effective_today,
+                    threshold=0.05,
+                    send_email=False 
+                )
+                print(f"     Recovery Triggered: {recovery_result.get('triggered')}")
+
+                # B. Workout Compliance
+                compliance_result = get_compliance_for_day(athlete.id, effective_today)
+                score = compliance_result.get('records', [{}])[0].get('overall_score') if compliance_result and compliance_result.get('records') else None
+                print(f"     Compliance Score: {score}")
+
+                # C. Generate LLM Summary
+                print("     Generating AI summary...")
+                email_body = llm_client.generate_daily_summary(
+                    athlete_name=athlete.name,
+                    date_str=effective_today.isoformat(),
+                    recovery_data=recovery_result,
+                    compliance_data=compliance_result
                 )
                 
-                if result['triggered']:
-                    alert_count += 1
-                    print(f"  🚨 Alert triggered for {athlete.name} (ID: {athlete.id})")
-                    print(f"     Reason: {result['reason']}")
-                    print(f"     Email status: {result.get('email_status', 'N/A')}")
-                else:
-                    print(f"  ✓ {athlete.name} (ID: {athlete.id}): {result['reason']}")
-                    
+                # D. Send Email
+                subject = f"Daily Summary: {athlete.name} - {effective_today.isoformat()}"
+                print(f"     Sending email to {settings.head_coach_email}...")
+                send_result = email_client.send_daily_summary(
+                    to_email=settings.head_coach_email,
+                    subject=subject,
+                    body=email_body
+                )
+                print(f"     ✓ Email sent: {send_result.get('status')}")
+
             except Exception as e:
-                print(f"  ✗ Error evaluating {athlete.name} (ID: {athlete.id}): {e}")
-        
-        print(f"\n  Summary: {alert_count} alert(s) triggered out of {len(athletes)} athlete(s)")
+                print(f"  ✗ Error processing {athlete.name}: {e}")
     
     print(f"\n{'='*60}")
     print(f"[Daily Job Completed] {datetime.now().isoformat()}")
@@ -93,5 +116,4 @@ def daily_job():
         "timestamp": timestamp,
         "ingest_result": ingest_result,
         "athletes_evaluated": len(athletes) if athletes else 0,
-        "alerts_triggered": alert_count if athletes else 0,
     }

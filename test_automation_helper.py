@@ -1,57 +1,139 @@
 """
-Interactive helper script for testing automation features.
+Interactive helper script for testing Podium Dashboard features.
 
 This script provides an easy-to-use interface for:
-- Running live email tests
-- Testing the daily scheduler
-- Simulating time-based scenarios
-- Manually triggering jobs
+- OAuth login with TrainingPeaks
+- Token management
+- Testing daily automation workflows
+- Manual data operations
 """
 import sys
-from datetime import date, timedelta
-
-from tests.test_recovery_alerts_live import (
-    test_live_recovery_alert_email,
-    test_live_with_existing_athlete,
-    LiveTestHelper,
-)
-from tests.test_automation import (
-    test_scheduler_daily_job_manual,
-    test_time_simulation_scenario,
-    test_scheduler_with_mock_time,
-    AutomationTestHelper,
-)
-from app.scheduling.scheduler import daily_job, start_scheduler, scheduler
-from app.services.recovery_alerts import evaluate_recovery_alert
-from app.services.athletes import list_athletes, get_or_create_demo_athlete
-from app.services.tokens import store_token, get_token, find_coach_token
-from app.auth.oauth import get_authorization_url, fetch_token
-from app.utils.settings import settings
 import webbrowser
+import urllib.parse
+from datetime import date, datetime, timezone
+
+from app.auth.oauth import get_authorization_url, fetch_token
+from app.services.tokens import store_token, get_token, find_coach_token
+from app.services.athletes import list_athletes, get_or_create_demo_athlete
+from app.services.ingest import ingest_recent
+from app.services.llm import llm_client
+from app.services.compliance import get_compliance_for_day
+from app.services.email import email_client
+from app.utils.settings import settings
+from app.utils.dates import get_effective_today
+from app.data.db import get_session
+from app.models.tables import Workout, DailyMetric, WorkoutCompliance
+from sqlalchemy import delete
+
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def _get_project_podium_athletes():
+    """Get list of Project Podium athlete objects."""
+    project_podium_names = [
+        "Reese Vannerson", "Sullivan Middaugh", "Porter Middaugh",
+        "Blake Bullard", "Blake Harris", "Carter Stuhlmacher",
+        "Mathis Beaulieu", "Keller norland", "Jimena De La Pena", "Braxton Legg"
+    ]
+    
+    all_athletes = list_athletes()
+    project_podium_athletes = []
+    
+    for name in project_podium_names:
+        athlete = next((a for a in all_athletes if a.name.lower() == name.lower()), None)
+        if athlete:
+            project_podium_athletes.append(athlete)
+        else:
+            print(f"⚠️  Warning: Athlete '{name}' not found in database")
+    
+    return project_podium_athletes
+
+
+def _process_single_athlete(athlete_id: int, athlete_name: str, effective_date):
+    """
+    Process a single athlete: ingest data and retrieve compliance/recovery.
+    
+    Returns:
+        dict with athlete summary data, or None if error
+    """
+    try:
+        # Run ingestion
+        result = ingest_recent(athlete_id=athlete_id, days=1)
+        
+        # Check for errors
+        if result.get('error'):
+            return {'error': result['error'], 'name': athlete_name}
+        
+        # Retrieve compliance data from database
+        compliance_db = get_compliance_for_day(athlete_id, effective_date)
+        compliance_records = compliance_db.get('records', []) if compliance_db else []
+        
+        # Extract recovery data
+        recovery_alert = result.get('recovery_alert', {})
+        
+        # Calculate average compliance
+        valid_scores = [c.get('overall_score') for c in compliance_records if c.get('overall_score') is not None]
+        avg_compliance = sum(valid_scores) / len(valid_scores) if valid_scores else None
+        
+        return {
+            'name': athlete_name,
+            'recovery_triggered': recovery_alert.get('triggered', False),
+            'recovery_reason': recovery_alert.get('reason', 'no_data'),
+            'recovery_metrics': recovery_alert.get('metrics', {}),
+            'compliance_records': compliance_records,
+            'workouts_count': len(compliance_records),
+            'avg_compliance': avg_compliance
+        }
+        
+    except Exception as e:
+        return {'error': str(e), 'name': athlete_name}
+
+
+def _process_batch_athletes(athlete_list, effective_date):
+    """
+    Process multiple athletes and return summaries and errors.
+    
+    Returns:
+        tuple: (athlete_summaries, errors)
+    """
+    athlete_summaries = []
+    errors = []
+    
+    for idx, athlete in enumerate(athlete_list, 1):
+        print(f"[{idx}/{len(athlete_list)}] Processing {athlete.name}...")
+        
+        summary = _process_single_athlete(athlete.id, athlete.name, effective_date)
+        
+        if summary.get('error'):
+            errors.append(f"{athlete.name}: {summary['error']}")
+            print(f"  ⚠️  Error: {summary['error']}")
+        else:
+            athlete_summaries.append(summary)
+            print(f"  ✅ {athlete.name}: {summary['workouts_count']} workouts")
+    
+    return athlete_summaries, errors
 
 
 def print_menu():
     """Display the main menu."""
     print("\n" + "=" * 70)
-    print(" PODIUM DASHBOARD - AUTOMATION TEST HELPER")
+    print(" PODIUM DASHBOARD - TEST & AUTOMATION HELPER")
     print("=" * 70)
-    print("\n� OAUTH & AUTHENTICATION:")
+    print("\n🔐 OAUTH & AUTHENTICATION:")
     print("  1. Login with TrainingPeaks (OAuth)")
     print("  2. Check current token status")
-    print("\n�📧 LIVE EMAIL TESTS:")
-    print("  3. Send live recovery alert email (creates test data)")
-    print("  4. Send live email with existing athlete")
-    print("\n⏰ SCHEDULER TESTS:")
-    print("  5. Run daily job manually (right now)")
-    print("  6. Test multi-day time simulation")
-    print("  7. Test with mocked time progression")
-    print("\n🔧 MANUAL OPERATIONS:")
-    print("  8. List all athletes")
-    print("  9. Check recovery alert for specific athlete")
-    print(" 10. Create test data for specific date")
-    print("\n⚙️  SCHEDULER CONTROL:")
-    print(" 11. Start background scheduler")
-    print(" 12. Check scheduler status")
+    print("\n👥 ATHLETE MANAGEMENT:")
+    print("  3. List all athletes")
+    print("\n📊 DATA INGESTION:")
+    print("  4. Ingest single day of data (metrics + workouts)")
+    print("\n📧 AI EMAIL GENERATION:")
+    print("  5. Generate coach summary email for single athlete")
+    print("  6. Generate batch coach summary for Project Podium athletes (preview)")
+    print("  8. Send live batch coach email via Resend (production)")
+    print("\n🗑️  DATABASE CLEANUP:")
+    print("  *. Delete today's data (workouts, metrics, compliance)")
     print("\n  0. Exit")
     print("=" * 70)
 
@@ -118,7 +200,6 @@ def oauth_login():
             return
         
         # Extract code from URL
-        import urllib.parse
         parsed = urllib.parse.urlparse(redirect_url)
         params = urllib.parse.parse_qs(parsed.query)
         
@@ -165,7 +246,7 @@ def oauth_login():
                 profile = resp.json()
                 print(f"✓ Profile verified: {profile.get('name', 'Unknown')}")
                 
-                # Update athlete record
+                # Update athlete record with TP data
                 from app.data.db import get_session
                 from app.models.tables import Athlete
                 with get_session() as session:
@@ -175,7 +256,7 @@ def oauth_login():
                         db_athlete.name = profile.get('name') or db_athlete.name
                         db_athlete.email = profile.get('email') or db_athlete.email
                         session.commit()
-                        print(f"✓ Athlete record updated")
+                        print(f"✓ Athlete record updated with TP data")
             else:
                 print(f"⚠️  Profile fetch returned status {resp.status_code}")
                 print("Token may still work for other endpoints.")
@@ -186,7 +267,7 @@ def oauth_login():
         print("\n" + "=" * 70)
         print("✓ OAUTH LOGIN COMPLETE")
         print("=" * 70)
-        print("\nYou can now use option 5 to run the daily job!")
+        print("\nYou can now use other menu options to test the system!")
         print("=" * 70 + "\n")
         
     except Exception as e:
@@ -215,7 +296,6 @@ def check_token_status():
         print(f"  Has refresh token: {bool(coach_token.refresh_token)}")
         
         # Check if expired
-        from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
         if coach_token.expires_at < now:
             print("\n⚠️  Token is EXPIRED")
@@ -248,344 +328,523 @@ def check_token_status():
     print("\n" + "=" * 70 + "\n")
 
 
-def send_live_test_email():
-    """Option 1: Send a live test email."""
-    print("\n⚠️  WARNING: This will send a REAL email to:", settings.head_coach_email)
-    confirm = input("\nType 'yes' to continue: ")
-    if confirm.lower() != 'yes':
-        print("Cancelled.")
-        return
-    
-    test_live_recovery_alert_email()
-
-
-def send_existing_athlete_email():
-    """Option 2: Send email for existing athlete."""
-    athletes = list_athletes()
-    
-    if not athletes:
-        print("\n❌ No athletes found in database.")
-        return
-    
-    print("\nAvailable athletes:")
-    for athlete in athletes:
-        print(f"  ID: {athlete.id} - {athlete.name}")
-    
-    try:
-        athlete_id = int(input("\nEnter athlete ID: "))
-        
-        # Verify athlete exists
-        athlete = next((a for a in athletes if a.id == athlete_id), None)
-        if not athlete:
-            print(f"❌ Athlete ID {athlete_id} not found.")
-            return
-        
-        print(f"\n⚠️  This will send a REAL email to: {settings.head_coach_email}")
-        print(f"Testing recovery alert for: {athlete.name}")
-        confirm = input("\nType 'yes' to continue: ")
-        if confirm.lower() != 'yes':
-            print("Cancelled.")
-            return
-        
-        # Use the existing athlete test
-        helper = LiveTestHelper(athlete_id=athlete_id)
-        
-        try:
-            print("\n" + "=" * 60)
-            print(f"LIVE TEST WITH ATHLETE: {athlete.name} (ID: {athlete_id})")
-            print("=" * 60)
-            
-            # Create baselines
-            helper.create_baseline_metrics(
-                athlete_id=athlete_id,
-                hrv_mean=75.0,
-                sleep_mean=7.5,
-                rhr_mean=52.0,
-            )
-            print("✓ Created baseline metrics")
-            
-            # Create breached metrics
-            test_date = date.today()
-            helper.create_breached_metrics(
-                athlete_id=athlete_id,
-                test_date=test_date,
-                hrv=63.0,
-                sleep_hours=6.0,
-                rhr=58.0,
-            )
-            print(f"✓ Created breached metrics for {test_date}")
-            
-            # Trigger alert
-            print("\n📧 Sending recovery alert email...")
-            result = evaluate_recovery_alert(
-                athlete_id=athlete_id,
-                check_date=test_date,
-                threshold=0.05,
-            )
-            
-            print(f"\n✓ Alert triggered: {result['triggered']}")
-            print(f"  Reason: {result['reason']}")
-            print(f"  Email status: {result.get('email_status', 'N/A')}")
-            
-            email_log = helper.verify_email_log(athlete_id, test_date)
-            if email_log:
-                print(f"✓ Email log recorded")
-            
-            print("\n" + "=" * 60)
-            print("✓ TEST COMPLETE - Check your email!")
-            print("=" * 60 + "\n")
-            
-        finally:
-            print("Cleaning up test data...")
-            helper.cleanup()
-            print("✓ Cleanup complete\n")
-            
-    except ValueError:
-        print("❌ Invalid athlete ID.")
-
-
-def run_daily_job():
-    """Option 5: Run the daily job manually for premium athletes only."""
-    print("\n⚠️  This will run the daily job for premium athletes:")
-    print("     - Reese Vannerson")
-    print("     - Blake Bullard")
-    print("     - Blake Harris")
-    confirm = input("\nType 'yes' to continue: ")
-    if confirm.lower() != 'yes':
-        print("Cancelled.")
-        return
-    
-    test_scheduler_daily_job_manual()
-
-
-def run_time_simulation():
-    """Option 4: Run multi-day time simulation."""
-    print("\n📅 This will simulate a multi-day scenario with test data")
-    confirm = input("Type 'yes' to continue: ")
-    if confirm.lower() != 'yes':
-        print("Cancelled.")
-        return
-    
-    test_time_simulation_scenario()
-
-
-def run_mock_time_test():
-    """Option 5: Test with mocked time."""
-    print("\n🕐 This will test with a mocked future date")
-    confirm = input("Type 'yes' to continue: ")
-    if confirm.lower() != 'yes':
-        print("Cancelled.")
-        return
-    
-    test_scheduler_with_mock_time()
-
-
 def list_all_athletes():
-    """Option 6: List all athletes."""
+    """Option 3: List all athletes."""
+    print("\n" + "=" * 70)
+    print(" ATHLETES IN DATABASE")
+    print("=" * 70)
+    
     athletes = list_athletes()
     
     if not athletes:
         print("\n❌ No athletes found in database.")
-        return
-    
-    print(f"\n{'='*70}")
-    print(f" ATHLETES IN DATABASE ({len(athletes)} total)")
-    print(f"{'='*70}")
-    
-    for athlete in athletes:
-        print(f"\nID: {athlete.id}")
-        print(f"  Name: {athlete.name}")
-        print(f"  Email: {athlete.email or 'N/A'}")
-        print(f"  External ID: {athlete.external_id}")
-        print(f"  TP Athlete ID: {athlete.tp_athlete_id or 'N/A'}")
-    
-    print(f"\n{'='*70}\n")
-
-
-def check_specific_athlete_alert():
-    """Option 7: Check recovery alert for a specific athlete."""
-    athletes = list_athletes()
-    
-    if not athletes:
-        print("\n❌ No athletes found in database.")
-        return
-    
-    print("\nAvailable athletes:")
-    for athlete in athletes:
-        print(f"  ID: {athlete.id} - {athlete.name}")
-    
-    try:
-        athlete_id = int(input("\nEnter athlete ID: "))
-        
-        # Verify athlete exists
-        athlete = next((a for a in athletes if a.id == athlete_id), None)
-        if not athlete:
-            print(f"❌ Athlete ID {athlete_id} not found.")
-            return
-        
-        # Allow custom date
-        use_today = input("\nCheck for today? (y/n): ").lower() == 'y'
-        if use_today:
-            check_date = date.today()
-        else:
-            date_str = input("Enter date (YYYY-MM-DD): ")
-            try:
-                check_date = date.fromisoformat(date_str)
-            except ValueError:
-                print("❌ Invalid date format.")
-                return
-        
-        print(f"\n🔍 Checking recovery alert for {athlete.name} on {check_date}...")
-        result = evaluate_recovery_alert(
-            athlete_id=athlete_id,
-            check_date=check_date,
-            threshold=0.05,
-        )
-        
-        print("\nResults:")
-        print(f"  Triggered: {result['triggered']}")
-        print(f"  Reason: {result['reason']}")
-        print(f"  Check Date: {result['check_date']}")
-        
-        if result['triggered']:
-            print(f"  Email Status: {result.get('email_status', 'N/A')}")
-        
-        if result.get('metrics'):
-            print("\n  Metrics:")
-            for metric_name, metric_data in result['metrics'].items():
-                print(f"    {metric_name}:")
-                print(f"      Current: {metric_data.get('current')}")
-                print(f"      Baseline: {metric_data.get('baseline')}")
-                print(f"      Breached: {metric_data.get('breached')}")
-        
-        print()
-        
-    except ValueError:
-        print("❌ Invalid athlete ID.")
-
-
-def create_test_data():
-    """Option 8: Create test data for a specific date."""
-    print("\n📝 CREATE TEST DATA")
-    print("=" * 70)
-    
-    helper = AutomationTestHelper()
-    
-    try:
-        # Create or select athlete
-        create_new = input("\nCreate new test athlete? (y/n): ").lower() == 'y'
-        
-        if create_new:
-            name = input("Enter athlete name: ")
-            athlete_id = helper.create_test_athlete(name)
-            print(f"✓ Created athlete ID: {athlete_id}")
-        else:
-            athletes = list_athletes()
-            if not athletes:
-                print("❌ No athletes found. Creating test athlete...")
-                athlete_id = helper.create_test_athlete()
-                print(f"✓ Created athlete ID: {athlete_id}")
-            else:
-                print("\nAvailable athletes:")
-                for athlete in athletes:
-                    print(f"  ID: {athlete.id} - {athlete.name}")
-                athlete_id = int(input("\nEnter athlete ID: "))
-        
-        # Date selection
-        date_str = input("\nEnter date for metrics (YYYY-MM-DD) or 'today': ")
-        if date_str.lower() == 'today':
-            metric_date = date.today()
-        else:
-            try:
-                metric_date = date.fromisoformat(date_str)
-            except ValueError:
-                print("❌ Invalid date format.")
-                return
-        
-        # Baseline creation
-        create_baseline = input("\nCreate baseline metrics? (y/n): ").lower() == 'y'
-        if create_baseline:
-            baseline_date = metric_date - timedelta(days=1)
-            helper.inject_baseline_data(athlete_id, baseline_date)
-            print(f"✓ Created baseline for {baseline_date}")
-        
-        # Metric type
-        print("\nMetric type:")
-        print("  1. Healthy (won't trigger alert)")
-        print("  2. Breached (will trigger alert)")
-        print("  3. Custom values")
-        
-        metric_type = input("Choose (1-3): ")
-        
-        if metric_type == '1':
-            helper.inject_healthy_metrics(athlete_id, metric_date)
-            print(f"✓ Created healthy metrics for {metric_date}")
-        elif metric_type == '2':
-            helper.inject_breached_metrics(athlete_id, metric_date)
-            print(f"✓ Created breached metrics for {metric_date}")
-        elif metric_type == '3':
-            hrv = float(input("Enter HRV value: "))
-            sleep = float(input("Enter sleep hours: "))
-            rhr = float(input("Enter RHR value: "))
-            helper.inject_metric_data(
-                athlete_id=athlete_id,
-                metric_date=metric_date,
-                hrv=hrv,
-                sleep_hours=sleep,
-                rhr=rhr,
-            )
-            print(f"✓ Created custom metrics for {metric_date}")
-        
-        print("\n✓ Test data created successfully!")
-        print("\nNote: Data will NOT be automatically cleaned up.")
-        print("Use database tools to remove if needed.\n")
-        
-    except (ValueError, KeyboardInterrupt) as e:
-        print(f"\n❌ Error: {e}")
-
-
-def start_background_scheduler():
-    """Option 9: Start the background scheduler."""
-    print("\n⚙️  Starting background scheduler...")
-    print(f"Scheduled time: {settings.daily_job_time}")
-    
-    try:
-        start_scheduler()
-        print("✓ Scheduler started successfully!")
-        print("\nThe scheduler is now running in the background.")
-        print(f"Daily job will run at {settings.daily_job_time} (America/Denver timezone)")
-        print("\nNote: Keep this script running for the scheduler to work.")
-        print("Press Ctrl+C to stop.\n")
-        
-        # Keep running
-        import time
-        while True:
-            time.sleep(60)
-            
-    except KeyboardInterrupt:
-        print("\n\n⏹️  Stopping scheduler...")
-        if scheduler.running:
-            scheduler.shutdown()
-        print("✓ Scheduler stopped.\n")
-
-
-def check_scheduler_status():
-    """Option 10: Check scheduler status."""
-    print("\n⚙️  SCHEDULER STATUS")
-    print("=" * 70)
-    print(f"Running: {scheduler.running}")
-    print(f"Scheduled time: {settings.daily_job_time} (America/Denver)")
-    
-    if scheduler.running:
-        jobs = scheduler.get_jobs()
-        print(f"\nJobs: {len(jobs)}")
-        for job in jobs:
-            print(f"  - {job.id}: next run = {job.next_run_time}")
+        print("Athletes will be created automatically when you:")
+        print("  - Login with OAuth (option 1)")
+        print("  - Fetch coach roster")
+        print("  - Run data ingestion")
     else:
-        print("\n❌ Scheduler is not running.")
-        print("Use option 9 to start it.")
+        print(f"\nFound {len(athletes)} athlete(s):\n")
+        for athlete in athletes:
+            print(f"ID: {athlete.id}")
+            print(f"  Name: {athlete.name}")
+            print(f"  Email: {athlete.email or 'N/A'}")
+            print(f"  External ID: {athlete.external_id}")
+            print(f"  TP Athlete ID: {athlete.tp_athlete_id or 'N/A'}")
+            print()
     
     print("=" * 70 + "\n")
+
+
+def ingest_single_day():
+    """Option 4: Ingest single day of data."""
+    print("\n" + "=" * 70)
+    print(" INGEST SINGLE DAY DATA")
+    print("=" * 70)
+    
+    # Check for token
+    if not find_coach_token():
+        print("\n❌ No coach token found!")
+        print("Please use option 1 to login with TrainingPeaks first.")
+        return
+    
+    # Show date info
+    effective_today = get_effective_today()
+    actual_today = date.today()
+    offset = settings.sandbox_current_day_offset
+    
+    print(f"\n📅 Date Information:")
+    print(f"  Actual today: {actual_today}")
+    print(f"  Sandbox offset: {offset} days")
+    print(f"  Effective 'today': {effective_today}")
+    print(f"  Will ingest data for: {effective_today}")
+    
+    # Select athlete
+    athletes = list_athletes()
+    if not athletes:
+        print("\n❌ No athletes found in database.")
+        print("Using demo athlete...")
+        athlete = None
+        athlete_id = None
+    else:
+        print(f"\n👥 Available athletes:")
+        for athlete in athletes:
+            print(f"  {athlete.id}. {athlete.name} (TP ID: {athlete.tp_athlete_id or 'N/A'})")
+        
+        choice = input("\nEnter athlete ID (or press Enter for demo athlete): ").strip()
+        if choice:
+            try:
+                athlete_id = int(choice)
+                athlete = next((a for a in athletes if a.id == athlete_id), None)
+                if not athlete:
+                    print(f"❌ Athlete ID {athlete_id} not found. Using demo athlete.")
+                    athlete_id = None
+                    athlete = None
+            except ValueError:
+                print("❌ Invalid input. Using demo athlete.")
+                athlete_id = None
+                athlete = None
+        else:
+            athlete_id = None
+            athlete = None
+    
+    athlete_name = athlete.name if athlete else "Demo Athlete"
+    print(f"\n✓ Selected: {athlete_name}")
+    
+    # Confirm
+    confirm = input(f"\nIngest data for {effective_today}? (y/n): ").lower()
+    if confirm != 'y':
+        print("Cancelled.")
+        return
+    
+    # Run ingestion
+    print(f"\n🔄 Ingesting data from TrainingPeaks...")
+    print("=" * 70)
+    
+    try:
+        result = ingest_recent(days=1, athlete_id=athlete_id)
+        
+        # Display results
+        print("\n✓ INGESTION COMPLETE")
+        print("=" * 70)
+        
+        print(f"\n📊 Summary:")
+        print(f"  Date range: {result['range']}")
+        print(f"  TP Athlete ID: {result['tp_athlete_id']}")
+        print(f"  Used coach token: {result['used_coach_token']}")
+        
+        print(f"\n💪 Workouts:")
+        print(f"  Fetched: {result['workouts_fetched']}")
+        print(f"  Inserted: {result['workouts_inserted']}")
+        print(f"  Duplicates: {result['workout_duplicates']}")
+        if result['sample_workout_ids']:
+            print(f"  Sample IDs: {', '.join(result['sample_workout_ids'][:3])}")
+        
+        print(f"\n📈 Metrics:")
+        print(f"  Fetched: {result['metrics_fetched']}")
+        print(f"  Saved: {result['metrics_saved']}")
+        if result['metrics_dates_saved']:
+            print(f"  Dates saved: {', '.join(result['metrics_dates_saved'])}")
+        
+        # Workout compliance details
+        if result.get('compliance_updates'):
+            print(f"\n✅ Workout Compliance:")
+            for comp in result['compliance_updates']:
+                sport = comp.get('sport', 'Unknown')
+                score = comp.get('overall_score')
+                notes = comp.get('notes', 'All good')
+                score_display = f"{score:.0f}" if score else "N/A"
+                print(f"  {sport}: Score {score_display}/100 - {notes}")
+        
+        # Latest compliance summary
+        if result.get('latest_compliance'):
+            latest = result['latest_compliance']
+            if latest.get('records'):
+                print(f"\n📋 Latest Compliance Details:")
+                for record in latest['records']:
+                    print(f"  Sport: {record.get('sport')}")
+                    print(f"  Date: {record.get('workout_date')}")
+                    print(f"  Overall Score: {record.get('overall_score', 'N/A')}")
+                    
+                    if record.get('metrics'):
+                        print(f"  Metrics:")
+                        for metric in record['metrics']:
+                            metric_name = metric.get('metric', 'unknown')
+                            planned = metric.get('planned', 'N/A')
+                            actual = metric.get('actual', 'N/A')
+                            rating = metric.get('rating', 'N/A')
+                            unit = metric.get('unit', '')
+                            print(f"    - {metric_name}: Planned {planned}{unit} vs Actual {actual}{unit} ({rating})")
+        
+        # Recovery alert
+        if result.get('recovery_alert'):
+            alert = result['recovery_alert']
+            print(f"\n🚨 Recovery Alert:")
+            print(f"  Triggered: {alert.get('triggered')}")
+            print(f"  Reason: {alert.get('reason')}")
+            if alert.get('metrics'):
+                for metric_name, metric_data in alert['metrics'].items():
+                    breached = "🔴 BREACHED" if metric_data.get('breached') else "🟢 OK"
+                    current = metric_data.get('current', 'N/A')
+                    baseline = metric_data.get('baseline', 'N/A')
+                    print(f"  {metric_name}: {current} (baseline: {baseline}) {breached}")
+        
+        print("\n" + "=" * 70 + "\n")
+        
+    except Exception as e:
+        print(f"\n❌ Error during ingestion: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def generate_coach_email():
+    """Option 5: Generate AI-powered coach summary email for single athlete."""
+    print("\n" + "=" * 70)
+    print(" GENERATE COACH SUMMARY EMAIL")
+    print("=" * 70)
+    
+    # Get effective date
+    actual_today = date.today()
+    effective_today = get_effective_today()
+    offset_days = (actual_today - effective_today).days
+    
+    print(f"\n📅 Date Information:")
+    print(f"  Actual today: {actual_today}")
+    print(f"  Sandbox offset: {offset_days} days")
+    print(f"  Effective 'today': {effective_today}")
+    print(f"  Will generate email for: {effective_today}")
+    
+    # Select athlete
+    athletes = list_athletes()
+    if not athletes:
+        print("\n❌ No athletes found!")
+        return
+    
+    print(f"\n👥 Available athletes:")
+    for athlete in athletes:
+        print(f"  {athlete.id}. {athlete.name} (TP ID: {athlete.tp_athlete_id})")
+    
+    athlete_input = input("\nEnter athlete ID (or press Enter for demo athlete): ").strip()
+    
+    if not athlete_input:
+        athlete = get_or_create_demo_athlete()
+    else:
+        athlete = next((a for a in athletes if str(a.id) == athlete_input), None)
+        if not athlete:
+            print(f"❌ Athlete with ID {athlete_input} not found.")
+            return
+    
+    print(f"\n✓ Selected: {athlete.name}")
+    
+    # Confirm ingestion
+    confirm = input(f"\nIngest data for {effective_today}? (y/n): ").lower() == 'y'
+    if not confirm:
+        print("Cancelled.")
+        return
+    
+    print("\n🔄 Processing athlete...")
+    print("=" * 70 + "\n")
+    
+    try:
+        # Get coach token
+        coach_token = find_coach_token()
+        if not coach_token:
+            print("❌ No coach token found. Please run option 1 to login first.")
+            return
+        
+        # Process athlete using helper function
+        summary = _process_single_athlete(athlete.id, athlete.name, effective_today)
+        
+        if summary.get('error'):
+            print(f"❌ Error: {summary['error']}")
+            return
+        
+        print("\n✓ PROCESSING COMPLETE")
+        print("=" * 70)
+        
+        # Prepare recovery data for LLM
+        recovery_data = {
+            'triggered': summary['recovery_triggered'],
+            'reason': summary['recovery_reason'],
+            'metrics': summary['recovery_metrics']
+        }
+        
+        # Prepare compliance data for LLM
+        compliance_data = {
+            'records': summary['compliance_records']
+        }
+        
+        # Generate email with LLM
+        print("\n🤖 Generating coach summary email with AI...")
+        print("=" * 70 + "\n")
+        
+        email_body = llm_client.generate_daily_summary(
+            athlete_name=athlete.name,
+            date_str=str(effective_today),
+            recovery_data=recovery_data,
+            compliance_data=compliance_data
+        )
+        
+        # Display generated email
+        print("\n📧 GENERATED EMAIL:")
+        print("=" * 70)
+        print(email_body)
+        print("=" * 70)
+        
+        # Summary stats
+        print("\n📊 Email Generation Summary:")
+        print(f"  Athlete: {athlete.name}")
+        print(f"  Date: {effective_today}")
+        print(f"  Recovery Alert: {'Yes' if recovery_data['triggered'] else 'No'}")
+        print(f"  Workouts Analyzed: {summary['workouts_count']}")
+        if summary['avg_compliance'] is not None:
+            print(f"  Average Compliance Score: {summary['avg_compliance']:.1f}/100")
+        
+        print("\n" + "=" * 70 + "\n")
+        
+    except Exception as e:
+        print(f"\n❌ Error during email generation: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def generate_batch_coach_email():
+    """Option 6: Generate batch coach summary email for all Project Podium athletes (preview)."""
+    print("\n" + "=" * 70)
+    print(" BATCH COACH SUMMARY - PROJECT PODIUM ATHLETES (PREVIEW)")
+    print("=" * 70)
+    
+    # Get effective date
+    actual_today = date.today()
+    effective_today = get_effective_today()
+    offset_days = (actual_today - effective_today).days
+    
+    print(f"\n📅 Date Information:")
+    print(f"  Actual today: {actual_today}")
+    print(f"  Sandbox offset: {offset_days} days")
+    print(f"  Effective 'today': {effective_today}")
+    print(f"  Will generate summary for: {effective_today}")
+    
+    # Get Project Podium athletes using helper
+    project_podium_athletes = _get_project_podium_athletes()
+    
+    print(f"\n👥 Found {len(project_podium_athletes)} Project Podium athletes:")
+    for athlete in project_podium_athletes:
+        print(f"  - {athlete.name} (ID: {athlete.id})")
+    
+    if not project_podium_athletes:
+        print("\n❌ No Project Podium athletes found!")
+        return
+    
+    # Confirm processing
+    confirm = input(f"\nProcess all {len(project_podium_athletes)} athletes for {effective_today}? (y/n): ").lower() == 'y'
+    if not confirm:
+        print("Cancelled.")
+        return
+    
+    # Get coach token
+    coach_token = find_coach_token()
+    if not coach_token:
+        print("❌ No coach token found. Please run option 1 to login first.")
+        return
+    
+    print("\n🔄 Processing athletes...")
+    print("=" * 70 + "\n")
+    
+    # Process all athletes using helper function
+    athlete_summaries, errors = _process_batch_athletes(project_podium_athletes, effective_today)
+    
+    print("\n" + "=" * 70)
+    print("✓ DATA COLLECTION COMPLETE")
+    print("=" * 70)
+    
+    # Generate combined email with LLM
+    print("\n🤖 Generating batch coach summary email with AI...")
+    print("=" * 70 + "\n")
+    
+    try:
+        email_body = llm_client.generate_batch_coach_summary(
+            date_str=str(effective_today),
+            athlete_summaries=athlete_summaries,
+            errors=errors
+        )
+        
+        # Display generated email
+        print("\n📧 GENERATED BATCH EMAIL:")
+        print("=" * 70)
+        print(email_body)
+        print("=" * 70)
+        
+        # Summary stats
+        print("\n📊 Batch Email Generation Summary:")
+        print(f"  Date: {effective_today}")
+        print(f"  Athletes Processed: {len(athlete_summaries)}")
+        print(f"  Errors: {len(errors)}")
+        print(f"  Athletes with Recovery Alerts: {sum(1 for s in athlete_summaries if s['recovery_triggered'])}")
+        total_workouts = sum(s['workouts_count'] for s in athlete_summaries)
+        print(f"  Total Workouts Analyzed: {total_workouts}")
+        
+        print("\n" + "=" * 70 + "\n")
+        
+    except Exception as e:
+        print(f"\n❌ Error generating batch email: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def delete_todays_data():
+    """Option 7: Delete all workout, metric, and compliance data for today."""
+    print("\n" + "=" * 70)
+    print(" DELETE TODAY'S DATA")
+    print("=" * 70)
+    
+    try:
+        # Get effective today (accounting for offset)
+        effective_today = get_effective_today()
+        print(f"\n📅 Target Date: {effective_today.isoformat()}")
+        print(f"⚠️  This will delete ALL workouts, metrics, and compliance records for this date.")
+        
+        # Confirm deletion
+        confirm = input("\nAre you sure you want to delete today's data? (yes/no): ").strip().lower()
+        if confirm != 'yes':
+            print("\n❌ Deletion cancelled.")
+            return
+        
+        with get_session() as session:
+            # Count records before deletion
+            workout_count = session.query(Workout).filter(Workout.date == effective_today).count()
+            metric_count = session.query(DailyMetric).filter(DailyMetric.date == effective_today).count()
+            compliance_count = session.query(WorkoutCompliance).filter(WorkoutCompliance.workout_date == effective_today).count()
+            
+            print(f"\n📊 Found:")
+            print(f"  - {workout_count} workouts")
+            print(f"  - {metric_count} daily metrics")
+            print(f"  - {compliance_count} compliance records")
+            
+            if workout_count == 0 and metric_count == 0 and compliance_count == 0:
+                print("\n✅ No data found for today. Nothing to delete.")
+                return
+            
+            # Delete compliance records first (foreign key dependency)
+            compliance_deleted = session.execute(
+                delete(WorkoutCompliance).where(WorkoutCompliance.workout_date == effective_today)
+            )
+            
+            # Delete workouts
+            workout_deleted = session.execute(
+                delete(Workout).where(Workout.date == effective_today)
+            )
+            
+            # Delete metrics
+            metric_deleted = session.execute(
+                delete(DailyMetric).where(DailyMetric.date == effective_today)
+            )
+            
+            session.commit()
+            
+            print(f"\n✅ Successfully deleted:")
+            print(f"  - {compliance_deleted.rowcount} compliance records")
+            print(f"  - {workout_deleted.rowcount} workouts")
+            print(f"  - {metric_deleted.rowcount} daily metrics")
+            
+        print("\n" + "=" * 70 + "\n")
+        
+    except Exception as e:
+        print(f"\n❌ Error deleting data: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def send_live_coach_email():
+    """Option 8: Send live batch coach email via Resend (production mode)."""
+    print("\n" + "=" * 70)
+    print(" SEND LIVE BATCH COACH EMAIL (PRODUCTION)")
+    print("=" * 70)
+    
+    try:
+        # Date setup
+        actual_today = date.today()
+        effective_today = get_effective_today()
+        offset_days = (actual_today - effective_today).days
+        
+        print(f"\n📅 Date Information:")
+        print(f"  Actual today: {actual_today}")
+        print(f"  Sandbox offset: {offset_days} days")
+        print(f"  Effective 'today': {effective_today}")
+        print(f"  Email subject date: {effective_today}")
+        
+        print(f"\n📧 Recipient: {settings.head_coach_email}")
+        print(f"📤 Delivery method: Resend API (LIVE EMAIL)")
+        
+        # Get Project Podium athletes using helper
+        project_podium_athletes = _get_project_podium_athletes()
+        
+        print(f"\n👥 Found {len(project_podium_athletes)} Project Podium athletes")
+        
+        if not project_podium_athletes:
+            print("\n❌ No Project Podium athletes found!")
+            return
+        
+        # Confirm sending
+        confirm = input(f"\n⚠️  This will send a REAL EMAIL to {settings.head_coach_email}. Continue? (yes/no): ").strip().lower()
+        if confirm != 'yes':
+            print("\n❌ Email sending cancelled.")
+            return
+        
+        # Get coach token
+        coach_token = find_coach_token()
+        if not coach_token:
+            print("❌ No coach token found. Please run option 1 to login first.")
+            return
+        
+        print("\n🔄 Processing athletes...")
+        print("=" * 70 + "\n")
+        
+        # Process all athletes using helper function
+        athlete_summaries, errors = _process_batch_athletes(project_podium_athletes, effective_today)
+        
+        # Generate AI summary email
+        print("\n🤖 Generating AI summary email...")
+        email_body = llm_client.generate_batch_coach_summary(
+            date_str=effective_today.isoformat(),
+            athlete_summaries=athlete_summaries,
+            errors=errors
+        )
+        
+        if not email_body:
+            print("\n❌ Failed to generate email content!")
+            return
+        
+        # Send email via Resend
+        print("\n📧 Sending email via Resend...")
+        subject = f"Project Podium Daily Summary - {effective_today.isoformat()}"
+        
+        send_result = email_client.send_text_email(
+            to_email=settings.head_coach_email,
+            subject=subject,
+            body=email_body
+        )
+        
+        print("\n" + "=" * 70)
+        print(" EMAIL SEND RESULT")
+        print("=" * 70)
+        print(f"\nStatus: {send_result.get('status', 'unknown')}")
+        
+        if send_result.get('status') == 'sent':
+            print(f"✅ Email successfully sent!")
+            print(f"Email ID: {send_result.get('email_id', 'N/A')}")
+            print(f"Provider: {send_result.get('provider', 'N/A')}")
+            print(f"To: {settings.head_coach_email}")
+        elif send_result.get('status') == 'logged':
+            print(f"⚠️  Email logged (not sent): {send_result.get('reason', 'unknown')}")
+        else:
+            print(f"❌ Email failed: {send_result.get('error', 'unknown')}")
+        
+        print("\n" + "=" * 70 + "\n")
+        
+    except Exception as e:
+        print(f"\n❌ Error sending email: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def main():
@@ -594,7 +853,7 @@ def main():
         print_menu()
         
         try:
-            choice = input("\nEnter your choice (0-12): ").strip()
+            choice = input("\nEnter your choice (0-8, or *): ").strip()
             
             if choice == '0':
                 print("\n👋 Goodbye!\n")
@@ -604,33 +863,27 @@ def main():
             elif choice == '2':
                 check_token_status()
             elif choice == '3':
-                send_live_test_email()
-            elif choice == '4':
-                send_existing_athlete_email()
-            elif choice == '5':
-                run_daily_job()
-            elif choice == '6':
-                run_time_simulation()
-            elif choice == '7':
-                run_mock_time_test()
-            elif choice == '8':
                 list_all_athletes()
-            elif choice == '9':
-                check_specific_athlete_alert()
-            elif choice == '10':
-                create_test_data()
-            elif choice == '11':
-                start_background_scheduler()
-            elif choice == '12':
-                check_scheduler_status()
+            elif choice == '4':
+                ingest_single_day()
+            elif choice == '5':
+                generate_coach_email()
+            elif choice == '6':
+                generate_batch_coach_email()
+            elif choice == '8':
+                send_live_coach_email()
+            elif choice == '*':
+                delete_todays_data()
             else:
-                print("\n❌ Invalid choice. Please enter 0-12.")
+                print("\n❌ Invalid choice. Please enter 0-8 or *.")
                 
         except KeyboardInterrupt:
             print("\n\n👋 Goodbye!\n")
             sys.exit(0)
         except Exception as e:
             print(f"\n❌ Error: {e}\n")
+            import traceback
+            traceback.print_exc()
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 .env
 app/.env
 *.env
+app\utils\settings.py
 
 # Python
 __pycache__/

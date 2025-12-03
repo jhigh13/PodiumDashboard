@@ -105,6 +105,7 @@ def evaluate_recovery_alert(
     athlete_id: int,
     check_date: Optional[date] = None,
     threshold: float = DEFAULT_THRESHOLD,
+    send_email: bool = True,
 ) -> Dict[str, object]:
     """Evaluate recovery metrics and send an alert if all conditions breach."""
     check_date = check_date or get_effective_today()
@@ -175,6 +176,10 @@ def evaluate_recovery_alert(
 
         if _already_sent(session, athlete_id, check_date):
             result["reason"] = "already_sent"
+            return result
+
+        if not send_email:
+            result["email_status"] = "suppressed"
             return result
 
         to_address = settings.head_coach_email

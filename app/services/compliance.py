@@ -135,73 +135,39 @@ def _rate_abs(diff: Optional[float], thresholds: Tuple[float, float, float]) -> 
     return "bad"
 
 
-def _collect_plan_summary(sport: str, plan_data: Optional[Dict[str, Any]], raw_workout: Dict[str, Any]) -> Dict[str, Any]:
-    plan = plan_data if isinstance(plan_data, dict) else {}
-    planned_duration = _normalize_duration(
-        _first_value(
-            (
-                "PlannedDurationSeconds",
-                "PlannedDuration",
-                "DurationPlannedSeconds",
-                "WorkoutPlannedDuration",
-                "TotalTimePlannedSeconds",
-                "TotalTimePlanned",
-            ),
-            plan,
-            raw_workout,
-        )
-    )
-    planned_distance = _first_value(
-        (
-            "PlannedDistanceMeters",
-            "PlannedDistance",
-            "DistancePlanned",
-            "WorkoutPlannedDistance",
-        ),
-        plan,
-        raw_workout,
-    )
-    planned_distance = _as_float(planned_distance)
+def _collect_plan_summary(sport: str, raw_workout: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract planned workout values from TrainingPeaks API response.
+    
+    Uses TrainingPeaks *Planned fields (TotalTimePlanned, DistancePlanned, etc.)
+    No fallback to actual values - keeps planned and actual completely separate.
+    """
+    # Extract planned values directly from TrainingPeaks API fields
+    planned_duration = _normalize_duration(raw_workout.get('TotalTimePlanned'))
+    planned_distance = _as_float(raw_workout.get('DistancePlanned'))  # meters
     normalized_distance, distance_unit = _normalize_distance_by_sport(sport, planned_distance)
-    planned_pace_swim = _as_float(
-        _first_value(
-            (
-                "PlannedPacePer100",
-                "TargetPacePer100",
-                "PacePer100",
-            ),
-            plan,
-        )
-    )
-    planned_pace_run = _as_float(
-        _first_value(
-            (
-                "PlannedPacePerMile",
-                "TargetPacePerMile",
-                "PacePerMile",
-            ),
-            plan,
-        )
-    )
-    planned_power = _as_float(
-        _first_value(
-            (
-                "TargetPower",
-                "PlannedPower",
-                "AveragePowerTarget",
-            ),
-            plan,
-        )
-    )
+    
+    # Planned pace/speed/power - typically not in workout list API, but check anyway
+    planned_power = _as_float(raw_workout.get('PowerPlanned'))
+    planned_velocity = _as_float(raw_workout.get('VelocityPlanned'))  # m/s
+    
     sport_lc = (sport or "").lower()
     planned_speed_mph = None
-    if sport_lc == "swim" and planned_duration and normalized_distance:
-        planned_pace_swim = planned_duration / (normalized_distance / 100)
-    if sport_lc == "run" and planned_duration and normalized_distance:
-        planned_pace_run = planned_duration / max(normalized_distance, 1e-6)
-        planned_speed_mph = normalized_distance / (planned_duration / 3600)
-    if sport_lc == "bike" and planned_duration and normalized_distance:
-        planned_speed_mph = normalized_distance / (planned_duration / 3600)
+    planned_pace_swim = None
+    planned_pace_run = None
+    
+    # Calculate pace/speed from planned distance and duration
+    if planned_duration and normalized_distance:
+        if sport_lc == "swim":
+            planned_pace_swim = planned_duration / (normalized_distance / 100)
+        elif sport_lc == "run":
+            planned_pace_run = planned_duration / max(normalized_distance, 1e-6)
+            planned_speed_mph = normalized_distance / (planned_duration / 3600)
+        elif sport_lc == "bike":
+            planned_speed_mph = normalized_distance / (planned_duration / 3600)
+    
+    # If VelocityPlanned exists, convert from m/s to mph
+    if planned_velocity and not planned_speed_mph:
+        planned_speed_mph = planned_velocity * 2.23694  # m/s to mph
 
     return {
         "duration_seconds": planned_duration,
@@ -211,7 +177,6 @@ def _collect_plan_summary(sport: str, plan_data: Optional[Dict[str, Any]], raw_w
         "run_pace_sec_per_mile": planned_pace_run,
         "average_speed_mph": planned_speed_mph,
         "power_watts": planned_power,
-        "source_keys": list(plan.keys()) if plan else [],
     }
 
 
@@ -233,35 +198,55 @@ def _duration_from_workout(workout: Workout) -> Optional[float]:
 
 
 def _collect_actual_summary(workout: Workout) -> Dict[str, Any]:
+    """Extract actual workout values from TrainingPeaks API response.
+    
+    Only returns actual values if Completed=true, otherwise returns None values.
+    Uses TrainingPeaks actual fields (Distance, TotalTime, etc. - no Planned suffix).
+    """
     raw = workout.raw_json or {}
-    duration_seconds = _duration_from_workout(workout)
-    distance = _first_value(
-        (
-            "TotalDistance",
-            "Distance",
-            "DistanceMeters",
-            "TotalDistanceMeters",
-            "WorkoutDistance",
-        ),
-        raw,
-    )
-    distance = _as_float(distance)
+    
+    # Check if workout was actually completed
+    completed = raw.get('Completed', False)
+    
+    if not completed:
+        # Workout was planned but not completed - no actual values
+        return {
+            "duration_seconds": None,
+            "distance_value": None,
+            "distance_unit": None,
+            "average_speed_mph": None,
+            "swim_pace_sec_per_100": None,
+            "run_pace_sec_per_mile": None,
+            "power_watts": None,
+            "completed": False,
+        }
+    
+    # Workout was completed - extract actual values
+    duration_seconds = _normalize_duration(raw.get('TotalTime'))  # decimal hours -> seconds
+    distance = _as_float(raw.get('Distance'))  # meters, actual only
     normalized_distance, distance_unit = _normalize_distance_by_sport(workout.sport or "", distance)
-    avg_speed = _first_value(("AverageSpeed", "AvgSpeed", "SpeedAverage"), raw)
-    avg_power = _first_value(("AveragePower", "AvgPower", "PowerAverage", "AverageWatts"), raw)
+    
+    avg_speed = _as_float(raw.get('VelocityAverage'))  # m/s
+    avg_power = _as_float(raw.get('PowerAverage'))  # watts
 
     swim_pace = None
     run_pace = None
     mph = None
     sport_lc = (workout.sport or "").lower()
+    
+    # Calculate pace/speed from actual distance and duration
     if normalized_distance and duration_seconds:
         if sport_lc == "swim":
             swim_pace = duration_seconds / (normalized_distance / 100)
-        if sport_lc == "run":
+        elif sport_lc == "run":
             run_pace = duration_seconds / max(normalized_distance, 1e-6)
             mph = normalized_distance / (duration_seconds / 3600)
-        if sport_lc == "bike":
+        elif sport_lc == "bike":
             mph = normalized_distance / (duration_seconds / 3600)
+    
+    # Convert VelocityAverage from m/s to mph if available
+    if avg_speed and not mph:
+        mph = avg_speed * 2.23694  # m/s to mph
 
     return {
         "duration_seconds": duration_seconds,
@@ -271,7 +256,7 @@ def _collect_actual_summary(workout: Workout) -> Dict[str, Any]:
         "swim_pace_sec_per_100": swim_pace,
         "run_pace_sec_per_mile": run_pace,
         "power_watts": avg_power,
-        "raw_keys": list(raw.keys()),
+        "completed": True,
     }
 
 
@@ -282,6 +267,7 @@ def _metric_entry(
     unit: str,
     rating: Optional[str],
     detail: Optional[float] = None,
+    include_in_score: bool = True,
 ) -> Dict[str, Any]:
     return {
         "metric": name,
@@ -292,6 +278,7 @@ def _metric_entry(
         "delta": detail,
         "planned_raw": planned,
         "actual_raw": actual,
+        "include_in_score": include_in_score,
     }
 
 
@@ -350,6 +337,7 @@ def _evaluate_swim(planned: Dict[str, Any], actual: Dict[str, Any]) -> List[Dict
         )
     )
 
+    # Duration and pace are still displayed but NOT included in compliance score
     rating_duration = _rate_percent(
         _percent_delta(planned.get("duration_seconds"), actual.get("duration_seconds")),
         DURATION_GOOD_PCT,
@@ -363,6 +351,7 @@ def _evaluate_swim(planned: Dict[str, Any], actual: Dict[str, Any]) -> List[Dict
             "seconds",
             rating_duration,
             _percent_delta(planned.get("duration_seconds"), actual.get("duration_seconds")),
+            include_in_score=False,  # Display only, not included in compliance score
         )
     )
 
@@ -380,6 +369,7 @@ def _evaluate_swim(planned: Dict[str, Any], actual: Dict[str, Any]) -> List[Dict
             "sec/100",
             rating_pace,
             pace_diff,
+            include_in_score=False,  # Display only, not included in compliance score
         )
     )
     _decorate_metrics(metrics, "swim")
@@ -511,7 +501,11 @@ def _evaluate_bike(planned: Dict[str, Any], actual: Dict[str, Any]) -> List[Dict
 
 
 def _score_metrics(metrics: List[Dict[str, Any]]) -> Optional[float]:
-    scores = [RATING_TO_SCORE[m["rating"]] for m in metrics if m.get("rating") in RATING_TO_SCORE]
+    scores = [
+        RATING_TO_SCORE[m["rating"]] 
+        for m in metrics 
+        if m.get("rating") in RATING_TO_SCORE and m.get("include_in_score", True)
+    ]
     if not scores:
         return None
     return sum(scores) / len(scores)
@@ -527,14 +521,20 @@ def _build_notes(metrics: List[Dict[str, Any]]) -> Optional[str]:
 
 def evaluate_workout_compliance(
     workout: Workout,
-    plan_data: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
-    """Return a compliance summary for a workout (without storing)."""
+    """Return a compliance summary for a workout (without storing).
+    
+    Extracts planned and actual values from workout.raw_json.
+    No external plan_data needed - everything is in the TrainingPeaks workout object.
+    """
     if workout is None:
         return None
     sport = (workout.sport or "").lower()
+    raw = workout.raw_json or {}
+    
+    # Extract planned and actual from same source (TrainingPeaks workout object)
+    planned_summary = _collect_plan_summary(sport, raw)
     actual_summary = _collect_actual_summary(workout)
-    planned_summary = _collect_plan_summary(sport, plan_data, workout.raw_json or {})
 
     metrics: List[Dict[str, Any]]
     if sport == "swim":
@@ -562,9 +562,12 @@ def evaluate_workout_compliance(
 def upsert_workout_compliance(
     session: Session,
     workout: Workout,
-    plan_data: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
-    summary = evaluate_workout_compliance(workout, plan_data)
+    """Calculate and store workout compliance.
+    
+    All data comes from workout.raw_json - no external plan_data needed.
+    """
+    summary = evaluate_workout_compliance(workout)
     if summary is None:
         return None
     metrics = summary.get("metrics") or []
@@ -614,33 +617,14 @@ def get_compliance_for_day(athlete_id: int, target_date: date) -> Optional[Dict[
             .order_by(WorkoutCompliance.updated_at.desc())
         )
         exact_records = session.execute(exact_stmt).scalars().all()
-        matched_exact = bool(exact_records)
-
-        records_to_use = exact_records
-        effective_date = target_date
-
-        if not records_to_use:
-            fallback_stmt = (
-                select(WorkoutCompliance)
-                .where(WorkoutCompliance.athlete_id == athlete_id)
-                .where(WorkoutCompliance.workout_date <= target_date)
-                .order_by(WorkoutCompliance.workout_date.desc(), WorkoutCompliance.updated_at.desc())
-            )
-            fallback_record = session.execute(fallback_stmt).scalars().first()
-            if not fallback_record:
-                return None
-            effective_date = fallback_record.workout_date
-            gather_stmt = (
-                select(WorkoutCompliance)
-                .where(WorkoutCompliance.athlete_id == athlete_id)
-                .where(WorkoutCompliance.workout_date == effective_date)
-                .order_by(WorkoutCompliance.updated_at.desc())
-            )
-            records_to_use = session.execute(gather_stmt).scalars().all()
+        
+        # Return None if no workouts found for the target date (no fallback)
+        if not exact_records:
+            return None
 
         return {
             "requested_date": target_date.isoformat(),
-            "is_exact_match": matched_exact,
-            "workout_date": effective_date.isoformat() if effective_date else None,
-            "records": [_serialize(record) for record in records_to_use],
+            "is_exact_match": True,
+            "workout_date": target_date.isoformat(),
+            "records": [_serialize(record) for record in exact_records],
         }

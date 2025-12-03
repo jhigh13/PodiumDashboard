@@ -1,6 +1,10 @@
 from pydantic import Field, ValidationError
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from pathlib import Path
+
+# Get the project root directory (where .env is located)
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 class Settings(BaseSettings):
     app_env: str = Field("dev", alias="APP_ENV")
@@ -11,16 +15,19 @@ class Settings(BaseSettings):
     tp_api_base: str = Field("https://api.sandbox.trainingpeaks.com", alias="TP_API_BASE")
     tp_redirect_uri: str = Field("http://localhost:8501/", alias="TP_REDIRECT_URI")
     tp_scope: str = Field("athlete:profile metrics:read workouts:read workouts:details", alias="TP_SCOPE")
-    database_url: str = Field("postgresql+psycopg://postgres.bevhfabnxuqmzdcellwp:6mBe-4ZKA_YWawR@aws-1-us-east-2.pooler.supabase.com:5432/postgres", alias="DATABASE_URL")
+    # Never hardcode secrets in source control. Require via environment.
+    database_url: str = Field("", alias="DATABASE_URL")
     resend_api_key: str = Field("", alias="RESEND_API_KEY")
     resend_from_email: str = Field("delivered@resend.dev", alias="RESEND_FROM_EMAIL")
     head_coach_email: str = Field("john.high@usatriathlon.org", alias="HEAD_COACH_EMAIL")
     daily_job_time: str = Field("07:30", alias="DAILY_JOB_TIME")
     sandbox_current_day_offset: int = Field(0, alias="SANDBOX_CURRENT_DAY_OFFSET")
+    openai_api_key: str = Field("", alias="OPENAI_API_KEY")
+    openai_model: str = Field("gpt-5-nano", alias="OPENAI_MODEL")
 
     class Config:
         case_sensitive = False
-        env_file = ".env"
+        env_file = str(PROJECT_ROOT / ".env")
         env_file_encoding = "utf-8"
 
 @lru_cache

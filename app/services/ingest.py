@@ -47,7 +47,6 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
     stored = 0
     duplicates = 0
     sample_workout_ids = []
-    plan_cache: dict[str, dict | None] = {}
     compliance_updates: list[dict[str, object]] = []
 
     with get_session() as session:
@@ -77,24 +76,32 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
             is_new_record = existing_record is None
 
             if is_new_record:
-                # Duration: prefer TotalTime (seconds?) else TotalTimePlanned; if looks like hours convert
-                raw_total = w.get('TotalTime') or w.get('TotalTimePlanned') or w.get('TotalTimePlannedSeconds')
+                # Extract values based on TrainingPeaks API structure
+                # Store ONLY actual values (when Completed=true), not planned values
+                completed = w.get('Completed', False)
+                
+                # Duration: only use TotalTime (actual) if completed
                 duration_sec = 0
-                if raw_total is not None:
+                if completed and w.get('TotalTime'):
                     try:
-                        val = float(raw_total)
-                        # Heuristic: if val < 20 assume hours, else assume seconds (many APIs use seconds; adjust if wrong later)
+                        val = float(w.get('TotalTime'))
+                        # TotalTime is in decimal hours, convert to seconds
                         duration_sec = int(val * 3600) if val < 20 else int(val)
                     except Exception:  # noqa: BLE001
                         duration_sec = 0
-                tss_val = w.get('tss') or w.get('TssActual') or w.get('TSSActual') or w.get('TssPlanned')
-                if_val = w.get('intensityFactor') or w.get('IF') or w.get('If')
-                date_field = w.get('workoutDay') or w.get('WorkoutDay') or w.get('Date')
+                
+                # TSS: only use TssActual if completed
+                tss_val = w.get('TssActual') if completed else None
+                
+                # IF: only use IF (actual) if completed
+                if_val = w.get('IF') if completed else None
+                
+                date_field = w.get('WorkoutDay')
                 record = Workout(
                     athlete_id=athlete.id,
                     tp_workout_id=workout_id,
                     date=_coerce_date(date_field),
-                    sport=w.get('sportType') or w.get('sport') or w.get('WorkoutType'),
+                    sport=w.get('WorkoutType'),
                     duration_sec=duration_sec,
                     tss=tss_val,
                     intensity_factor=if_val,
@@ -109,16 +116,10 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
                 # Update raw payload for existing entries so compliance has latest data
                 record.raw_json = w or record.raw_json
 
-            plan_data = None
-            if workout_id:
-                if workout_id not in plan_cache:
-                    try:
-                        plan_cache[workout_id] = api.fetch_workout_details(workout_id, tp_athlete_id=tp_athlete_id)
-                    except Exception:  # noqa: BLE001
-                        plan_cache[workout_id] = None
-                plan_data = plan_cache[workout_id]
-
-            compliance_summary = upsert_workout_compliance(session, record, plan_data)
+            # Calculate compliance for new workouts only
+            compliance_summary = None
+            if is_new_record:
+                compliance_summary = upsert_workout_compliance(session, record)
             if compliance_summary:
                 compliance_updates.append({
                     "workout_id": workout_id,
@@ -148,7 +149,16 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
             tp_athlete_id = inferred_id
 
     # Metrics range (same period) - we will store ALL metrics for the date range
-    metrics = api.fetch_daily_metrics_range(start, end, tp_athlete_id=tp_athlete_id)
+    try:
+        metrics = api.fetch_daily_metrics_range(start, end, tp_athlete_id=tp_athlete_id)
+    except RuntimeError as e:
+        # Handle non-premium athlete errors gracefully
+        if "403 Forbidden" in str(e) and "premium athletes" in str(e).lower():
+            metrics = None
+            print(f"⚠️  Athlete {athlete.name} is not a premium athlete - metrics unavailable")
+        else:
+            raise
+    
     metrics_fetched = len(metrics) if metrics else 0
     metrics_saved = 0
     metrics_raw_sample = []
@@ -198,8 +208,8 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
                 metrics_saved += 1
                 metrics_dates_saved.append(metric_date.isoformat())
 
-    baseline_summary = calculate_baselines(athlete.id, end_date=end)
-    alert_result = evaluate_recovery_alert(athlete.id, check_date=end)
+    # Recovery alert evaluation (uses existing baselines from DB)
+    alert_result = evaluate_recovery_alert(athlete.id, check_date=end, send_email=False)
     latest_compliance = get_compliance_for_day(athlete.id, end)
 
     return {
@@ -218,10 +228,9 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
         "metrics_dates_saved": sorted(metrics_dates_saved),  # Show which specific dates were saved
         "metrics_raw_sample": metrics_raw_sample,
         "metric_field_names": sorted(list(metric_field_names)),
-        "baseline_summary": baseline_summary,
         "recovery_alert": alert_result,
         "compliance_updates": compliance_updates,
-    "latest_compliance": latest_compliance,
+        "latest_compliance": latest_compliance,
         "note": "Duration heuristic: <20 treated as hours else seconds; Metrics: check field_names for API structure"
     }
 
