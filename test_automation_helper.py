@@ -19,16 +19,40 @@ from app.services.ingest import ingest_recent
 from app.services.llm import llm_client
 from app.services.compliance import get_compliance_for_day
 from app.services.email import email_client
+from app.services.fit_analysis import FitFileAnalyzer, analyze_fit_file, get_fit_summary
 from app.utils.settings import settings
 from app.utils.dates import get_effective_today
 from app.data.db import get_session
-from app.models.tables import Workout, DailyMetric, WorkoutCompliance
-from sqlalchemy import delete
+from app.models.tables import Workout, DailyMetric, WorkoutCompliance, OAuthToken, Athlete
+from sqlalchemy import delete, select, desc
 
 
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
+
+def _has_any_token():
+    """Check if there's any valid token (coach or athlete)."""
+    with get_session() as session:
+        stmt = select(OAuthToken).order_by(desc(OAuthToken.created_at)).limit(1)
+        latest_token = session.execute(stmt).scalar_one_or_none()
+        return latest_token is not None
+
+
+def _get_current_athlete():
+    """Get the most recently logged-in athlete (latest token)."""
+    with get_session() as session:
+        # Get most recent token
+        stmt = select(OAuthToken).order_by(desc(OAuthToken.created_at)).limit(1)
+        latest_token = session.execute(stmt).scalar_one_or_none()
+        
+        if not latest_token:
+            return None
+        
+        # Get associated athlete
+        athlete = session.get(Athlete, latest_token.athlete_id)
+        return athlete
+
 
 def _get_project_podium_athletes():
     """Get list of Project Podium athlete objects."""
@@ -132,6 +156,10 @@ def print_menu():
     print("  5. Generate coach summary email for single athlete")
     print("  6. Generate batch coach summary for Project Podium athletes (preview)")
     print("  8. Send live batch coach email via Resend (production)")
+    print("\n📁 WORKOUT FILE DOWNLOADS:")
+    print("  9. Download FIT files for single athlete (single day)")
+    print(" 10. Download time series data for single athlete (single day)")
+    print(" 11. Analyze FIT file (extract metrics, laps, HR zones, power)")
     print("\n🗑️  DATABASE CLEANUP:")
     print("  *. Delete today's data (workouts, metrics, compliance)")
     print("\n  0. Exit")
@@ -164,10 +192,10 @@ def oauth_login():
     choice = input("\nEnter choice (1-2) [default: 2]: ").strip() or "2"
     
     if choice == "1":
-        scopes = ["athlete:profile", "metrics:read", "workouts:read", "workouts:details"]
+        scopes = ["athlete:profile", "metrics:read", "workouts:read", "workouts:details", "workouts:wod"]
         role = "Athlete"
     else:
-        scopes = ["coach:athletes", "metrics:read", "workouts:read", "workouts:details"]
+        scopes = ["coach:athletes", "metrics:read", "workouts:read", "workouts:details", "workouts:wod"]
         role = "Coach"
     
     print(f"\n✓ Selected: {role}")
@@ -223,16 +251,8 @@ def oauth_login():
         
         print("✓ Token received successfully!")
         
-        # Get or create athlete
-        athlete = get_or_create_demo_athlete()
-        print(f"✓ Using athlete: {athlete.name} (ID: {athlete.id})")
-        
-        # Store token
-        store_token(athlete.id, token)
-        print("✓ Token stored in database")
-        
-        # Verify token works by fetching profile
-        print("\n🔍 Verifying token by fetching profile...")
+        # Fetch profile to get athlete info
+        print("\n🔍 Fetching athlete profile...")
         import requests
         headers = {
             "Authorization": f"Bearer {token['access_token']}", 
@@ -240,29 +260,105 @@ def oauth_login():
         }
         profile_url = f"{settings.tp_api_base}/v1/athlete/profile"
         
+        athlete_id = None
         try:
             resp = requests.get(profile_url, headers=headers, timeout=20)
             if resp.status_code == 200:
                 profile = resp.json()
-                print(f"✓ Profile verified: {profile.get('name', 'Unknown')}")
                 
-                # Update athlete record with TP data
+                # DEBUG: Print the full profile to see what fields are available
+                print(f"\n🔍 DEBUG - Profile response fields: {list(profile.keys())}")
+                print(f"🔍 DEBUG - Full profile: {profile}")
+                
+                # Try multiple field names for athlete ID (case-sensitive!)
+                tp_athlete_id = (profile.get('Id') or profile.get('id') or 
+                                profile.get('athleteId') or profile.get('AthleteId') or
+                                profile.get('userId') or profile.get('UserId') or 
+                                profile.get('user', {}).get('id'))
+                
+                # Build athlete name from FirstName/LastName or fall back to name field
+                first_name = profile.get('FirstName') or profile.get('firstName', '')
+                last_name = profile.get('LastName') or profile.get('lastName', '')
+                if first_name or last_name:
+                    athlete_name = f"{first_name} {last_name}".strip()
+                else:
+                    athlete_name = (profile.get('name') or profile.get('Name') or 
+                                  profile.get('userName') or profile.get('UserName') or
+                                  profile.get('user', {}).get('name', 'Unknown Athlete'))
+                
+                athlete_email = (profile.get('Email') or profile.get('email') or 
+                               profile.get('user', {}).get('email'))
+                
+                print(f"✓ Profile verified: {athlete_name} (TP ID: {tp_athlete_id})")
+                
+                # Find or create athlete record with TP data
                 from app.data.db import get_session
                 from app.models.tables import Athlete
+                from sqlalchemy import select
+                
                 with get_session() as session:
-                    db_athlete = session.get(Athlete, athlete.id)
-                    if db_athlete:
-                        db_athlete.tp_athlete_id = profile.get('athleteId') or profile.get('id')
-                        db_athlete.name = profile.get('name') or db_athlete.name
-                        db_athlete.email = profile.get('email') or db_athlete.email
-                        session.commit()
-                        print(f"✓ Athlete record updated with TP data")
+                    if tp_athlete_id:
+                        # Try to find existing athlete by TP ID
+                        stmt = select(Athlete).where(Athlete.tp_athlete_id == tp_athlete_id)
+                        db_athlete = session.execute(stmt).scalar_one_or_none()
+                        
+                        if db_athlete:
+                            # Update existing athlete
+                            print(f"✓ Found existing athlete record (ID: {db_athlete.id})")
+                            db_athlete.name = athlete_name
+                            db_athlete.email = athlete_email or db_athlete.email
+                            athlete_id = db_athlete.id
+                        else:
+                            # Create new athlete
+                            print(f"✓ Creating new athlete record...")
+                            new_athlete = Athlete(
+                                external_id=f"tp_{tp_athlete_id}",
+                                tp_athlete_id=tp_athlete_id,
+                                name=athlete_name,
+                                email=athlete_email
+                            )
+                            session.add(new_athlete)
+                            session.flush()  # Get the ID
+                            athlete_id = new_athlete.id
+                            print(f"✓ Created athlete record (ID: {athlete_id})")
+                    else:
+                        # No TP ID in profile, use demo athlete
+                        print("⚠️  No athlete ID in profile, using demo athlete...")
+                        demo = get_or_create_demo_athlete()
+                        athlete_id = demo.id
+                    
+                    session.commit()
             else:
                 print(f"⚠️  Profile fetch returned status {resp.status_code}")
-                print("Token may still work for other endpoints.")
+                print(f"Response: {resp.text[:200]}")
+                print("Using demo athlete as fallback...")
+                demo = get_or_create_demo_athlete()
+                athlete_id = demo.id
         except Exception as e:
             print(f"⚠️  Profile verification failed: {e}")
-            print("Token may still be valid.")
+            import traceback
+            traceback.print_exc()
+            print("Using demo athlete as fallback...")
+            demo = get_or_create_demo_athlete()
+            athlete_id = demo.id
+        
+        if not athlete_id:
+            demo = get_or_create_demo_athlete()
+            athlete_id = demo.id
+        
+        # Re-fetch athlete from database for display (avoids detached instance)
+        from app.data.db import get_session
+        from app.models.tables import Athlete
+        with get_session() as session:
+            athlete = session.get(Athlete, athlete_id)
+            athlete_name = athlete.name
+            athlete_display_id = athlete.id
+        
+        print(f"\n✓ Using athlete: {athlete_name} (ID: {athlete_display_id})")
+        
+        # Store token
+        store_token(athlete_id, token)
+        print("✓ Token stored in database")
         
         print("\n" + "=" * 70)
         print("✓ OAUTH LOGIN COMPLETE")
@@ -379,7 +475,9 @@ def ingest_single_day():
     print(f"  Will ingest data for: {effective_today}")
     
     # Select athlete
+    current_athlete = _get_current_athlete()
     athletes = list_athletes()
+    
     if not athletes:
         print("\n❌ No athletes found in database.")
         print("Using demo athlete...")
@@ -387,11 +485,16 @@ def ingest_single_day():
         athlete_id = None
     else:
         print(f"\n👥 Available athletes:")
+        if current_athlete:
+            print(f"  0. {current_athlete.name} (TP ID: {current_athlete.tp_athlete_id or 'N/A'}) [Currently logged in]")
         for athlete in athletes:
             print(f"  {athlete.id}. {athlete.name} (TP ID: {athlete.tp_athlete_id or 'N/A'})")
         
-        choice = input("\nEnter athlete ID (or press Enter for demo athlete): ").strip()
-        if choice:
+        choice = input("\nEnter athlete ID (0 for current, or press Enter for demo athlete): ").strip()
+        if choice == '0' and current_athlete:
+            athlete = current_athlete
+            athlete_id = current_athlete.id
+        elif choice:
             try:
                 athlete_id = int(choice)
                 athlete = next((a for a in athletes if a.id == athlete_id), None)
@@ -514,18 +617,23 @@ def generate_coach_email():
     print(f"  Will generate email for: {effective_today}")
     
     # Select athlete
+    current_athlete = _get_current_athlete()
     athletes = list_athletes()
     if not athletes:
         print("\n❌ No athletes found!")
         return
     
     print(f"\n👥 Available athletes:")
+    if current_athlete:
+        print(f"  0. {current_athlete.name} (TP ID: {current_athlete.tp_athlete_id}) [Currently logged in]")
     for athlete in athletes:
         print(f"  {athlete.id}. {athlete.name} (TP ID: {athlete.tp_athlete_id})")
     
-    athlete_input = input("\nEnter athlete ID (or press Enter for demo athlete): ").strip()
+    athlete_input = input("\nEnter athlete ID (0 for current, or press Enter for demo athlete): ").strip()
     
-    if not athlete_input:
+    if athlete_input == '0' and current_athlete:
+        athlete = current_athlete
+    elif not athlete_input:
         athlete = get_or_create_demo_athlete()
     else:
         athlete = next((a for a in athletes if str(a.id) == athlete_input), None)
@@ -847,13 +955,675 @@ def send_live_coach_email():
         traceback.print_exc()
 
 
+def download_time_series_data():
+    """Option 10: Download time series data for a single athlete on a single day."""
+    print("\n" + "=" * 70)
+    print(" DOWNLOAD TIME SERIES DATA")
+    print("=" * 70)
+    
+    # Check for any token (coach or athlete)
+    if not _has_any_token():
+        print("\n❌ No TrainingPeaks login found!")
+        print("Please use option 1 to login with TrainingPeaks first.")
+        return
+    
+    # Show date info
+    effective_today = get_effective_today()
+    actual_today = date.today()
+    offset = settings.sandbox_current_day_offset
+    
+    print(f"\n📅 Date Information:")
+    print(f"  Actual today: {actual_today}")
+    print(f"  Sandbox offset: {offset} days")
+    print(f"  Effective 'today': {effective_today}")
+    print(f"  Will download time series for: {effective_today}")
+    
+    # Select athlete
+    current_athlete = _get_current_athlete()
+    athletes = list_athletes()
+    if not athletes:
+        print("\n❌ No athletes found in database.")
+        print("Using demo athlete...")
+        athlete = None
+        athlete_id = None
+    else:
+        print(f"\n👥 Available athletes:")
+        if current_athlete:
+            print(f"  0. {current_athlete.name} (TP ID: {current_athlete.tp_athlete_id}) [Currently logged in]")
+        for athlete in athletes:
+            print(f"  {athlete.id}. {athlete.name} (TP ID: {athlete.tp_athlete_id})")
+        
+        choice = input("\nEnter athlete ID (0 for current, or press Enter for demo athlete): ").strip()
+        if choice == '0' and current_athlete:
+            athlete = current_athlete
+            athlete_id = current_athlete.id
+        elif choice:
+            try:
+                athlete_id = int(choice)
+                athlete = next((a for a in athletes if a.id == athlete_id), None)
+                if not athlete:
+                    print(f"❌ Athlete ID {athlete_id} not found!")
+                    return
+            except ValueError:
+                print("❌ Invalid athlete ID!")
+                return
+        else:
+            athlete = get_or_create_demo_athlete()
+            athlete_id = athlete.id
+    
+    athlete_name = athlete.name if athlete else "Demo Athlete"
+    print(f"\n✓ Selected: {athlete_name}")
+    
+    # Get API client
+    from app.services.tp_api import get_api
+    api = get_api(athlete_id)
+    
+    # First, fetch the day's workouts to get workout IDs
+    print(f"\n🔍 Fetching workouts for {effective_today}...")
+    try:
+        tp_athlete_id = getattr(athlete, 'tp_athlete_id', None)
+        workouts = api.fetch_workouts(effective_today, effective_today, tp_athlete_id=tp_athlete_id)
+        
+        if not workouts:
+            print(f"\n❌ No workouts found for {effective_today}")
+            return
+        
+        print(f"\n✓ Found {len(workouts)} workout(s)")
+        
+        # Display workouts
+        print("\n" + "=" * 70)
+        print("AVAILABLE WORKOUTS:")
+        print("=" * 70)
+        for idx, w in enumerate(workouts, 1):
+            wid = w.get('workoutId') or w.get('id') or w.get('Id') or w.get('WorkoutId')
+            sport = w.get('WorkoutType') or w.get('sportType') or 'Unknown'
+            title = w.get('Title') or w.get('title') or 'Untitled'
+            completed = w.get('Completed', False)
+            print(f"\n{idx}. Workout ID: {wid}")
+            print(f"   Sport: {sport}")
+            print(f"   Title: {title}")
+            print(f"   Completed: {'Yes' if completed else 'No'}")
+        
+        # Create output directory
+        import os
+        output_dir = os.path.join(os.getcwd(), "workout_timeseries")
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"\n📁 Output directory: {output_dir}")
+        
+        # Download time series data
+        print("\n" + "=" * 70)
+        print("DOWNLOADING TIME SERIES DATA:")
+        print("=" * 70)
+        
+        successful_downloads = []
+        failed_downloads = []
+        
+        for idx, w in enumerate(workouts, 1):
+            wid = w.get('workoutId') or w.get('id') or w.get('Id') or w.get('WorkoutId')
+            if not wid:
+                print(f"\n[{idx}/{len(workouts)}] ⚠️  Skipping workout - no ID found")
+                continue
+            
+            sport = w.get('WorkoutType') or w.get('sportType') or 'Unknown'
+            completed = w.get('Completed', False)
+            
+            # Skip uncompleted workouts (they won't have time series data)
+            if not completed:
+                print(f"\n[{idx}/{len(workouts)}] ⚠️  Skipping workout {wid} - not completed yet")
+                continue
+            
+            print(f"\n[{idx}/{len(workouts)}] Downloading time series for workout {wid} ({sport})...")
+            
+            try:
+                data = api.fetch_workout_time_series(str(wid), tp_athlete_id=tp_athlete_id)
+                
+                # Save as JSON
+                import json
+                filename = f"timeseries_{wid}_{effective_today.isoformat()}.json"
+                filepath = os.path.join(output_dir, filename)
+                
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2)
+                
+                file_size = len(json.dumps(data))
+                
+                # Analyze the data structure
+                channels = []
+                data_points = 0
+                has_lap_stats = False
+                has_swim_stats = False
+                
+                if 'WorkoutChannels' in data and data['WorkoutChannels']:
+                    channels = data['WorkoutChannels'].get('Channels', [])
+                    data_points = len(data['WorkoutChannels'].get('Data', []))
+                
+                if 'LapStats' in data and data['LapStats']:
+                    has_lap_stats = True
+                
+                if 'SwimStats' in data and data['SwimStats']:
+                    has_swim_stats = True
+                
+                print(f"  ✓ Saved: {filepath}")
+                print(f"  ✓ Size: {file_size:,} bytes")
+                print(f"  ✓ Channels: {len(channels)} ({', '.join(channels[:5])}{'...' if len(channels) > 5 else ''})")
+                print(f"  ✓ Data Points: {data_points:,}")
+                if has_lap_stats:
+                    print(f"  ✓ Laps: {len(data['LapStats'])}")
+                if has_swim_stats:
+                    print(f"  ✓ Swim Data: Yes")
+                
+                # Extract key stats if available
+                if 'WorkoutStats' in data and data['WorkoutStats']:
+                    stats = data['WorkoutStats']
+                    print(f"  ✓ Stats: TSS={stats.get('Tss', 'N/A')}, IF={stats.get('IF', 'N/A')}, "
+                          f"Avg HR={stats.get('HeartRateAverage', 'N/A')}, "
+                          f"Avg Power={stats.get('PowerAverage', 'N/A')}")
+                
+                successful_downloads.append({
+                    'workout_id': wid,
+                    'filename': filename,
+                    'filepath': filepath,
+                    'size': file_size,
+                    'sport': sport,
+                    'channels': len(channels),
+                    'data_points': data_points,
+                    'has_laps': has_lap_stats,
+                    'has_swim': has_swim_stats
+                })
+                
+            except RuntimeError as e:
+                error_msg = str(e)
+                print(f"  ❌ Error: {error_msg}")
+                failed_downloads.append({
+                    'workout_id': wid,
+                    'error': error_msg,
+                    'sport': sport
+                })
+            except Exception as e:
+                print(f"  ❌ Unexpected error: {e}")
+                import traceback
+                traceback.print_exc()
+                failed_downloads.append({
+                    'workout_id': wid,
+                    'error': str(e),
+                    'sport': sport
+                })
+        
+        # Summary
+        print("\n" + "=" * 70)
+        print("DOWNLOAD SUMMARY")
+        print("=" * 70)
+        print(f"\n✓ Successful: {len(successful_downloads)}")
+        print(f"❌ Failed: {len(failed_downloads)}")
+        
+        if successful_downloads:
+            print("\n📁 Downloaded time series files:")
+            total_data_points = 0
+            for dl in successful_downloads:
+                print(f"\n  - {dl['filename']}")
+                print(f"    Sport: {dl['sport']}")
+                print(f"    Size: {dl['size']:,} bytes")
+                print(f"    Channels: {dl['channels']}")
+                print(f"    Data Points: {dl['data_points']:,}")
+                if dl['has_laps']:
+                    print(f"    Has Lap Data: Yes")
+                if dl['has_swim']:
+                    print(f"    Has Swim Data: Yes")
+                total_data_points += dl['data_points']
+            
+            print(f"\n  📊 Total data points across all workouts: {total_data_points:,}")
+        
+        if failed_downloads:
+            print("\n⚠️  Failed downloads:")
+            has_connection_error = False
+            for fail in failed_downloads:
+                print(f"  - Workout {fail['workout_id']} ({fail['sport']}): {fail['error']}")
+                if 'connection failure' in fail['error'].lower() or 'too large' in fail['error'].lower():
+                    has_connection_error = True
+            
+            if has_connection_error:
+                print("\n💡 TIP: For workouts with very large time series data:")
+                print("   • Try Option 9 to download as FIT file instead")
+                print("   • FIT files are compressed binary format and handle large datasets better")
+                print("   • You can then use FIT file parsers to extract the time series data")
+        
+        print("\n💡 Use Case: Time series data includes second-by-second measurements")
+        print("   for heart rate, power, cadence, GPS, elevation, and more.")
+        print("   Perfect for detailed workout analysis when FIT files aren't available.")
+        print("\n" + "=" * 70 + "\n")
+        
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def download_fit_files():
+    """Option 9: Download FIT files for a single athlete on a single day."""
+    print("\n" + "=" * 70)
+    print(" DOWNLOAD FIT FILES")
+    print("=" * 70)
+    
+    # Check for any token (coach or athlete)
+    if not _has_any_token():
+        print("\n❌ No TrainingPeaks login found!")
+        print("Please use option 1 to login with TrainingPeaks first.")
+        return
+    
+    # Show date info
+    effective_today = get_effective_today()
+    actual_today = date.today()
+    offset = settings.sandbox_current_day_offset
+    
+    print(f"\n📅 Date Information:")
+    print(f"  Actual today: {actual_today}")
+    print(f"  Sandbox offset: {offset} days")
+    print(f"  Effective 'today': {effective_today}")
+    print(f"  Will download workouts for: {effective_today}")
+    
+    # Select athlete
+    current_athlete = _get_current_athlete()
+    athletes = list_athletes()
+    if not athletes:
+        print("\n❌ No athletes found in database.")
+        print("Using demo athlete...")
+        athlete = None
+        athlete_id = None
+    else:
+        print(f"\n👥 Available athletes:")
+        if current_athlete:
+            print(f"  0. {current_athlete.name} (TP ID: {current_athlete.tp_athlete_id}) [Currently logged in]")
+        for athlete in athletes:
+            print(f"  {athlete.id}. {athlete.name} (TP ID: {athlete.tp_athlete_id})")
+        
+        choice = input("\nEnter athlete ID (0 for current, or press Enter for demo athlete): ").strip()
+        if choice == '0' and current_athlete:
+            athlete = current_athlete
+            athlete_id = current_athlete.id
+        elif choice:
+            try:
+                athlete_id = int(choice)
+                athlete = next((a for a in athletes if a.id == athlete_id), None)
+                if not athlete:
+                    print(f"❌ Athlete ID {athlete_id} not found!")
+                    return
+            except ValueError:
+                print("❌ Invalid athlete ID!")
+                return
+        else:
+            athlete = get_or_create_demo_athlete()
+            athlete_id = athlete.id
+    
+    athlete_name = athlete.name if athlete else "Demo Athlete"
+    print(f"\n✓ Selected: {athlete_name}")
+    
+    # Get API client
+    from app.services.tp_api import get_api
+    api = get_api(athlete_id)
+    
+    # First, fetch the day's workouts to get workout IDs
+    print(f"\n🔍 Fetching workouts for {effective_today}...")
+    try:
+        tp_athlete_id = getattr(athlete, 'tp_athlete_id', None)
+        workouts = api.fetch_workouts(effective_today, effective_today, tp_athlete_id=tp_athlete_id)
+        
+        if not workouts:
+            print(f"\n❌ No workouts found for {effective_today}")
+            return
+        
+        print(f"\n✓ Found {len(workouts)} workout(s)")
+        
+        # Display workouts
+        print("\n" + "=" * 70)
+        print("AVAILABLE WORKOUTS:")
+        print("=" * 70)
+        for idx, w in enumerate(workouts, 1):
+            wid = w.get('workoutId') or w.get('id') or w.get('Id') or w.get('WorkoutId')
+            sport = w.get('WorkoutType') or w.get('sportType') or 'Unknown'
+            title = w.get('Title') or w.get('title') or 'Untitled'
+            print(f"\n{idx}. Workout ID: {wid}")
+            print(f"   Sport: {sport}")
+            print(f"   Title: {title}")
+        
+        # Select file format
+        print("\n" + "=" * 70)
+        print("FILE FORMAT OPTIONS:")
+        print("=" * 70)
+        print("  1. FIT (binary format for Garmin/devices)")
+        print("  2. JSON (structured workout data)")
+        print("  3. MRC (Computrainer format)")
+        print("  4. ERG (Ergometer format)")
+        print("  5. ZWO (Zwift format)")
+        
+        format_choice = input("\nSelect format (1-5) [default: 1 for FIT]: ").strip() or "1"
+        
+        format_map = {
+            "1": "fit",
+            "2": "json",
+            "3": "mrc",
+            "4": "erg",
+            "5": "zwo"
+        }
+        
+        file_format = format_map.get(format_choice, "fit")
+        print(f"\n✓ Selected format: {file_format.upper()}")
+        
+        # Create output directory
+        import os
+        output_dir = os.path.join(os.getcwd(), "workout_files")
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"\n📁 Output directory: {output_dir}")
+        
+        # Download files
+        print("\n" + "=" * 70)
+        print("DOWNLOADING FILES:")
+        print("=" * 70)
+        
+        successful_downloads = []
+        failed_downloads = []
+        
+        for idx, w in enumerate(workouts, 1):
+            wid = w.get('workoutId') or w.get('id') or w.get('Id') or w.get('WorkoutId')
+            if not wid:
+                print(f"\n[{idx}/{len(workouts)}] ⚠️  Skipping workout - no ID found")
+                continue
+            
+            sport = w.get('WorkoutType') or w.get('sportType') or 'Unknown'
+            print(f"\n[{idx}/{len(workouts)}] Downloading workout {wid} ({sport})...")
+            
+            try:
+                result = api.fetch_workout_file(str(wid), file_format, tp_athlete_id=tp_athlete_id)
+                
+                # Save file
+                filename = result['filename']
+                filepath = os.path.join(output_dir, filename)
+                
+                if file_format == 'json':
+                    # Save JSON as text
+                    import json
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        json.dump(result['content'], f, indent=2)
+                    file_size = len(json.dumps(result['content']))
+                else:
+                    # Save binary file
+                    with open(filepath, 'wb') as f:
+                        f.write(result['content'])
+                    file_size = len(result['content'])
+                
+                print(f"  ✓ Saved: {filepath}")
+                print(f"  ✓ Size: {file_size:,} bytes")
+                
+                successful_downloads.append({
+                    'workout_id': wid,
+                    'filename': filename,
+                    'filepath': filepath,
+                    'size': file_size,
+                    'sport': sport
+                })
+                
+            except RuntimeError as e:
+                error_msg = str(e)
+                print(f"  ❌ Error: {error_msg}")
+                failed_downloads.append({
+                    'workout_id': wid,
+                    'error': error_msg,
+                    'sport': sport
+                })
+            except Exception as e:
+                print(f"  ❌ Unexpected error: {e}")
+                failed_downloads.append({
+                    'workout_id': wid,
+                    'error': str(e),
+                    'sport': sport
+                })
+        
+        # Summary
+        print("\n" + "=" * 70)
+        print("DOWNLOAD SUMMARY")
+        print("=" * 70)
+        print(f"\n✓ Successful: {len(successful_downloads)}")
+        print(f"❌ Failed: {len(failed_downloads)}")
+        
+        if successful_downloads:
+            print("\n📁 Downloaded files:")
+            for dl in successful_downloads:
+                print(f"  - {dl['filename']} ({dl['size']:,} bytes) - {dl['sport']}")
+        
+        if failed_downloads:
+            print("\n⚠️  Failed downloads:")
+            for fail in failed_downloads:
+                print(f"  - Workout {fail['workout_id']} ({fail['sport']}): {fail['error']}")
+            print("\n💡 Note: Workouts without structure cannot be exported to FIT/structured formats.")
+            print("   Only structured (planned) workouts support file export.")
+        
+        print("\n" + "=" * 70 + "\n")
+        
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def analyze_fit_file():
+    """Option 11: Analyze a FIT file and display comprehensive metrics."""
+    print("\n" + "=" * 70)
+    print(" ANALYZE FIT FILE")
+    print("=" * 70)
+    
+    try:
+        import os
+        import json
+        
+        # Ask for file path
+        print("\nEnter the path to the FIT file:")
+        print("(e.g., C:\\Users\\johnk\\Downloads\\workout_3444886827.fit)")
+        file_path = input("\nFile path: ").strip().strip('"')
+        
+        if not file_path:
+            print("❌ No file path provided.")
+            return
+        
+        if not os.path.exists(file_path):
+            print(f"❌ File not found: {file_path}")
+            return
+        
+        # Analysis options
+        print("\n" + "=" * 70)
+        print("Analysis Options:")
+        print("  1. Quick summary (session + laps only)")
+        print("  2. Full analysis (includes all time-series records)")
+        print("  3. HR zone analysis")
+        print("  4. Power curve analysis")
+        print("  5. Export to JSON (full analysis)")
+        
+        choice = input("\nSelect analysis type (1-5) [default: 1]: ").strip() or "1"
+        
+        print("\n" + "=" * 70)
+        print("Analyzing FIT file...")
+        print("=" * 70 + "\n")
+        
+        analyzer = FitFileAnalyzer(file_path)
+        
+        if choice == "1":
+            # Quick summary
+            summary = analyzer.get_quick_summary()
+            
+            print("📊 WORKOUT SUMMARY")
+            print("=" * 70)
+            print(f"\n🏃 Sport: {summary.get('sport', 'N/A')}")
+            
+            if summary.get('duration_seconds'):
+                minutes = int(summary['duration_seconds'] // 60)
+                seconds = int(summary['duration_seconds'] % 60)
+                print(f"⏱️  Duration: {minutes}:{seconds:02d}")
+            
+            if summary.get('distance_km'):
+                print(f"📏 Distance: {summary['distance_km']} km ({summary.get('distance_miles', 'N/A')} mi)")
+            
+            if summary.get('avg_pace_per_km'):
+                print(f"🏃 Avg Pace: {summary['avg_pace_per_km']} /km ({summary.get('avg_pace_per_mile', 'N/A')} /mi)")
+            
+            if summary.get('avg_heart_rate'):
+                print(f"💓 Heart Rate: {summary['avg_heart_rate']} avg / {summary.get('max_heart_rate', 'N/A')} max bpm")
+            
+            if summary.get('avg_power'):
+                print(f"⚡ Power: {summary['avg_power']} avg / {summary.get('max_power', 'N/A')} max watts")
+            
+            if summary.get('total_calories'):
+                print(f"🔥 Calories: {summary['total_calories']}")
+            
+            print(f"\n📊 Laps: {summary.get('lap_count', 0)}")
+            print(f"📈 Data Points: {summary.get('record_count', 0)}")
+            
+        elif choice == "2":
+            # Full analysis
+            analysis = analyzer.analyze(include_records=True)
+            
+            print("📊 FULL WORKOUT ANALYSIS")
+            print("=" * 70)
+            
+            # Session summary
+            session = analysis.session
+            print(f"\n🏃 Sport: {session.sport} - {session.sub_sport or 'N/A'}")
+            
+            if session.start_time:
+                print(f"📅 Date: {session.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            if session.total_timer_time:
+                minutes = int(session.total_timer_time // 60)
+                seconds = int(session.total_timer_time % 60)
+                print(f"⏱️  Duration: {minutes}:{seconds:02d}")
+            
+            if session.total_distance:
+                km = session.total_distance / 1000
+                miles = session.total_distance / 1609.34
+                print(f"📏 Distance: {km:.2f} km ({miles:.2f} mi)")
+            
+            if session.avg_heart_rate:
+                print(f"💓 Heart Rate: {session.avg_heart_rate} avg / {session.max_heart_rate} max bpm")
+            
+            if session.avg_power:
+                print(f"⚡ Power: {session.avg_power}W avg / {session.max_power}W max")
+                if session.normalized_power:
+                    print(f"   Normalized Power: {session.normalized_power}W")
+            
+            if session.total_calories:
+                print(f"🔥 Calories: {session.total_calories}")
+            
+            if session.total_ascent:
+                print(f"⛰️  Elevation: {session.total_ascent:.0f}m ascent / {session.total_descent:.0f}m descent")
+            
+            if session.training_stress_score:
+                print(f"📈 TSS: {session.training_stress_score:.1f}")
+            
+            if session.intensity_factor:
+                print(f"📊 IF: {session.intensity_factor:.3f}")
+            
+            # Laps
+            print(f"\n📊 LAPS ({len(analysis.laps)})")
+            print("-" * 70)
+            for lap in analysis.laps:
+                print(f"\nLap {lap.lap_number}:")
+                if lap.total_timer_time:
+                    minutes = int(lap.total_timer_time // 60)
+                    seconds = int(lap.total_timer_time % 60)
+                    print(f"  Time: {minutes}:{seconds:02d}")
+                if lap.total_distance:
+                    print(f"  Distance: {lap.total_distance / 1000:.2f} km")
+                if lap.avg_heart_rate:
+                    print(f"  HR: {lap.avg_heart_rate} avg / {lap.max_heart_rate} max")
+                if lap.avg_power:
+                    print(f"  Power: {lap.avg_power}W avg / {lap.max_power}W max")
+            
+            # Devices
+            if analysis.devices:
+                print(f"\n📱 DEVICES ({len(analysis.devices)})")
+                print("-" * 70)
+                for device in analysis.devices:
+                    print(f"  {device.manufacturer} {device.product}")
+                    if device.serial_number:
+                        print(f"    Serial: {device.serial_number}")
+            
+            print(f"\n📈 Total Data Points: {len(analysis.records)}")
+            
+        elif choice == "3":
+            # HR zone analysis
+            max_hr_input = input("\nEnter your max heart rate [default: 190]: ").strip()
+            max_hr = int(max_hr_input) if max_hr_input else 190
+            
+            zones = analyzer.extract_hr_zones(max_hr=max_hr)
+            
+            print("💓 HEART RATE ZONE ANALYSIS")
+            print("=" * 70)
+            print(f"\nMax HR: {max_hr} bpm\n")
+            
+            for zone_name, minutes in zones.items():
+                if zone_name != 'total_minutes':
+                    percentage = (minutes / zones['total_minutes'] * 100) if zones['total_minutes'] > 0 else 0
+                    bar_length = int(percentage / 2)  # Scale to 50 chars max
+                    bar = "█" * bar_length
+                    print(f"{zone_name:20s} {minutes:6.1f} min ({percentage:5.1f}%) {bar}")
+            
+            print(f"\n{'Total':20s} {zones['total_minutes']:6.1f} min")
+            
+        elif choice == "4":
+            # Power curve
+            print("\n⚡ POWER CURVE ANALYSIS")
+            print("=" * 70)
+            
+            durations_input = input("\nUse default durations? (y/n) [default: y]: ").strip().lower()
+            
+            if durations_input == 'n':
+                print("Enter comma-separated durations in seconds (e.g., 5,10,60,300,1200):")
+                custom_input = input("Durations: ").strip()
+                durations = [int(d.strip()) for d in custom_input.split(',')]
+                power_curve = analyzer.extract_power_curve(durations=durations)
+            else:
+                power_curve = analyzer.extract_power_curve()
+            
+            print("\nDuration     Max Avg Power")
+            print("-" * 70)
+            
+            for duration, power in sorted(power_curve.items()):
+                if duration < 60:
+                    duration_str = f"{duration}s"
+                elif duration < 3600:
+                    duration_str = f"{duration // 60}min"
+                else:
+                    duration_str = f"{duration // 3600}h {(duration % 3600) // 60}min"
+                
+                print(f"{duration_str:12s} {power:6d}W")
+            
+        elif choice == "5":
+            # Export to JSON
+            analysis = analyzer.analyze(include_records=True)
+            data = analysis.to_dict()
+            
+            # Generate output filename
+            base_name = os.path.splitext(os.path.basename(file_path))[0]
+            output_file = os.path.join(os.path.dirname(file_path), f"{base_name}_analysis.json")
+            
+            with open(output_file, 'w') as f:
+                json.dump(data, f, indent=2, default=str)
+            
+            print(f"✅ Analysis exported to: {output_file}")
+            print(f"   File size: {os.path.getsize(output_file):,} bytes")
+        
+        print("\n" + "=" * 70 + "\n")
+        
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 def main():
     """Main menu loop."""
     while True:
         print_menu()
         
         try:
-            choice = input("\nEnter your choice (0-8, or *): ").strip()
+            choice = input("\nEnter your choice (0-10, or *): ").strip()
             
             if choice == '0':
                 print("\n👋 Goodbye!\n")
@@ -872,10 +1642,16 @@ def main():
                 generate_batch_coach_email()
             elif choice == '8':
                 send_live_coach_email()
+            elif choice == '9':
+                download_fit_files()
+            elif choice == '10':
+                download_time_series_data()
+            elif choice == '11':
+                analyze_fit_file()
             elif choice == '*':
                 delete_todays_data()
             else:
-                print("\n❌ Invalid choice. Please enter 0-8 or *.")
+                print("\n❌ Invalid choice. Please enter 0-10 or *.")
                 
         except KeyboardInterrupt:
             print("\n\n👋 Goodbye!\n")

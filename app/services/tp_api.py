@@ -214,6 +214,246 @@ class TrainingPeaksAPI:
         except ValueError:
             return None
 
+    def fetch_workout_available_formats(self, workout_id: str, tp_athlete_id: int | None = None):
+        """Check which file formats are available for a workout.
+        
+        Args:
+            workout_id: The TrainingPeaks workout ID
+            tp_athlete_id: Optional athlete ID for athlete-scoped endpoint
+            
+        Returns:
+            list of available format strings (e.g., ['fit', 'json', 'mrc'])
+            Empty list if workout has no structured data
+            
+        Raises:
+            requests.HTTPError: For API errors
+        """
+        if not workout_id:
+            return []
+        
+        # Use athlete-scoped endpoint if tp_athlete_id provided
+        if tp_athlete_id and self._using_coach_token:
+            url = f"{API_BASE}/v2/workouts/{tp_athlete_id}/wod/file/{workout_id}/"
+        else:
+            url = f"{API_BASE}/v2/workouts/wod/file/{workout_id}/"
+        
+        # Make HEAD request to check available formats
+        r = requests.head(url, headers=self._headers(), timeout=10)
+        
+        if r.status_code == 404:
+            # Workout has no structured data
+            return []
+        elif r.status_code == 200:
+            # Check Content-Type or Accept header for available formats
+            # TrainingPeaks usually returns available formats in headers
+            # For now, return common formats - could be enhanced
+            return ['fit', 'json', 'mrc', 'erg', 'zwo']
+        else:
+            r.raise_for_status()
+            return []
+
+    def fetch_workout_file(self, workout_id: str, file_format: str = 'fit', tp_athlete_id: int | None = None):
+        """Download a structured workout file in the specified format.
+        
+        Args:
+            workout_id: The TrainingPeaks workout ID
+            file_format: File format to download (fit, erg, mrc, zwo, json). Default is 'fit'
+            tp_athlete_id: Optional athlete ID for athlete-scoped endpoint
+            
+        Returns:
+            dict with:
+                - 'content': bytes of the file (for binary formats) or dict (for json)
+                - 'filename': suggested filename from Content-Disposition header
+                - 'format': the requested format
+            
+        Raises:
+            RuntimeError: If workout has no structure or format is invalid
+            requests.HTTPError: For other API errors
+        """
+        if not workout_id:
+            raise ValueError("workout_id is required")
+        
+        # Validate format
+        valid_formats = ['fit', 'erg', 'mrc', 'zwo', 'json']
+        file_format = file_format.lower()
+        if file_format not in valid_formats:
+            raise ValueError(f"Invalid format '{file_format}'. Must be one of: {', '.join(valid_formats)}")
+        
+        # Build URL - use athlete-scoped endpoint if tp_athlete_id provided
+        if tp_athlete_id and self._using_coach_token:
+            url = f"{API_BASE}/v2/workouts/{tp_athlete_id}/wod/file/{workout_id}/?format={file_format}"
+        else:
+            # Athlete accessing their own workout or demo
+            url = f"{API_BASE}/v2/workouts/wod/file/{workout_id}/?format={file_format}"
+        
+        # Make request
+        r = requests.get(url, headers=self._headers(), timeout=30)
+        
+        # Handle error responses
+        if r.status_code == 400:
+            error_msg = r.text or 'Unknown error'
+            if 'no structure' in error_msg.lower():
+                raise RuntimeError(f"Workout {workout_id} has no structure and cannot be exported")
+            elif 'cannot be exported' in error_msg.lower():
+                raise RuntimeError(f"Workout {workout_id} cannot be exported to format '{file_format}'")
+            else:
+                raise RuntimeError(f"Bad request: {error_msg}")
+        
+        if r.status_code == 404:
+            raise RuntimeError(f"Workout {workout_id} not found")
+        
+        r.raise_for_status()
+        
+        # Extract filename from Content-Disposition header
+        filename = None
+        content_disposition = r.headers.get('Content-Disposition', '')
+        if 'filename=' in content_disposition:
+            # Parse filename from header like: attachment; filename="workout.fit"
+            import re
+            match = re.search(r'filename="?([^"]+)"?', content_disposition)
+            if match:
+                filename = match.group(1)
+        
+        # If no filename from header, create a default one
+        if not filename:
+            filename = f"workout_{workout_id}.{file_format}"
+        
+        # For JSON format, parse and return as dict
+        if file_format == 'json':
+            return {
+                'content': r.json(),
+                'filename': filename,
+                'format': file_format,
+                'workout_id': workout_id
+            }
+        
+        # For binary formats (fit, erg, mrc, zwo), return raw bytes
+        return {
+            'content': r.content,
+            'filename': filename,
+            'format': file_format,
+            'workout_id': workout_id
+        }
+
+    def fetch_workout_time_series(self, workout_id: str, tp_athlete_id: int | None = None):
+        """Fetch detailed workout data including time series channels.
+        
+        This endpoint returns comprehensive workout data including:
+        - Time series data with channels (HR, power, cadence, elevation, etc.)
+        - Workout statistics (averages, maximums, TSS, IF, etc.)
+        - Lap statistics
+        - Swim statistics (if applicable)
+        
+        This is useful for workouts that don't have structured workout files,
+        as it provides second-by-second data from the actual workout file.
+        
+        Args:
+            workout_id: The TrainingPeaks workout ID
+            tp_athlete_id: Optional athlete ID for athlete-scoped endpoint
+            
+        Returns:
+            dict with:
+                - 'WorkoutId': The workout ID
+                - 'WorkoutChannels': Time series data with Channels list and Data array
+                - 'WorkoutStats': Overall workout statistics
+                - 'LapStats': Per-lap statistics (if available)
+                - 'SwimStats': Swim-specific data (if swim workout)
+            
+        Raises:
+            RuntimeError: If workout not found
+            requests.HTTPError: For other API errors
+        """
+        if not workout_id:
+            raise ValueError("workout_id is required")
+        
+        # Build URL - use athlete-scoped endpoint if tp_athlete_id provided
+        if tp_athlete_id:
+            # Coach accessing roster athlete's workout details
+            url = f"{API_BASE}/v2/workouts/{tp_athlete_id}/id/{workout_id}/details"
+        else:
+            # Athlete accessing their own workout details
+            url = f"{API_BASE}/v2/workouts/id/{workout_id}/details"
+        
+        # Make request (increased timeout for large time series data)
+        # Use retry logic for timeout-prone endpoint
+        headers = self._headers()
+        max_retries = 1  # Reduced retries since connection errors happen immediately
+        timeout = 120  # 2 minutes - anything larger hits server-side limits
+        
+        print(f"  ⏳ Requesting time series data (timeout: {timeout}s)...")
+        
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                r = requests.get(url, headers=headers, timeout=timeout)
+                print(f"  ✓ Received response (status: {r.status_code})")
+                break  # Success, exit retry loop
+            except requests.exceptions.ReadTimeout:
+                if attempt < max_retries:
+                    print(f"  ⏱️  Timeout after {timeout}s, retrying (attempt {attempt + 2}/{max_retries + 1})...")
+                    timeout += 60  # Add 60 seconds for each retry
+                    continue
+                else:
+                    # Final attempt failed
+                    raise RuntimeError(
+                        f"Workout {workout_id} timed out after {max_retries + 1} attempts ({timeout}s total). "
+                        f"This workout has extremely large time series data. "
+                        f"Try Option 9 (FIT file download) instead."
+                    )
+            except (requests.exceptions.ConnectionError, requests.exceptions.ChunkedEncodingError) as e:
+                last_error = e
+                if attempt < max_retries:
+                    print(f"  🔌 Connection error, retrying (attempt {attempt + 2}/{max_retries + 1})...")
+                    continue
+                else:
+                    # Server closed connection - likely data too large for API endpoint
+                    raise RuntimeError(
+                        f"Workout {workout_id} connection closed by server after {attempt + 1} attempt(s). "
+                        f"Time series data is too large for this API endpoint. "
+                        f"Use Option 9 (FIT file download) instead - FIT files handle large datasets better."
+                    )
+        
+        # DEBUG: Log details on non-200 responses
+        if r.status_code != 200:
+            error_body = ""
+            try:
+                error_body = r.text[:500]
+            except:
+                pass
+            print(f"\n=== WORKOUT DETAILS API DEBUG ===")
+            print(f"URL: {url}")
+            print(f"Status: {r.status_code}")
+            print(f"Using coach token: {self._using_coach_token}")
+            print(f"Athlete ID provided: {tp_athlete_id}")
+            print(f"Workout ID: {workout_id}")
+            print(f"Headers (token masked): {dict((k, v[:20]+'...' if k == 'Authorization' else v) for k,v in headers.items())}")
+            print(f"Response body: {error_body}")
+            print(f"================================\n")
+        
+        # Handle 204 No Content - workout exists but has no time series data
+        if r.status_code == 204:
+            raise RuntimeError(
+                f"Workout {workout_id} has no time series data available. "
+                f"This can happen if: (1) workout wasn't uploaded with a device file, "
+                f"(2) only manual workout entry exists, or (3) data was deleted."
+            )
+        
+        # Handle error responses
+        if r.status_code == 404:
+            raise RuntimeError(f"Workout {workout_id} not found or no details available")
+        
+        if r.status_code == 403:
+            raise RuntimeError(f"Access denied for workout {workout_id}. Ensure token has workouts:details scope")
+        
+        r.raise_for_status()
+        
+        # Parse and return JSON data
+        try:
+            data = r.json()
+            return data
+        except ValueError as e:
+            raise RuntimeError(f"Failed to parse workout details: {e}") from e
+
 
 def get_api(athlete_id: int | None = None):
     """Return an API client bound to a specific athlete id.
