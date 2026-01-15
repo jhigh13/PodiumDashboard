@@ -9,6 +9,9 @@ class Athlete(Base):
     tp_athlete_id = Column(Integer, index=True)
     name = Column(String)
     email = Column(String)
+    # TrainingPeaks daily metrics endpoint is premium-only for many athletes.
+    # None = unknown, True = metrics available, False = premium restriction / unavailable.
+    tp_metrics_available = Column(Boolean)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class OAuthToken(Base):
@@ -122,6 +125,20 @@ class AthleteSurvey(Base):
     notes = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
+class SyncState(Base):
+    __tablename__ = 'sync_state'
+    id = Column(Integer, primary_key=True)
+    athlete_id = Column(Integer, ForeignKey('athletes.id', ondelete='CASCADE'), unique=True, index=True)
+
+    last_training_sync_date = Column(Date, index=True)
+    last_training_sync_at = Column(DateTime(timezone=True))
+
+    last_race_sync_date = Column(Date, index=True)
+    last_race_sync_at = Column(DateTime(timezone=True))
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 class WorkoutCompliance(Base):
     __tablename__ = 'workout_compliance'
     id = Column(Integer, primary_key=True)
@@ -136,3 +153,42 @@ class WorkoutCompliance(Base):
     evaluation_notes = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class WTODashboardAthleteMap(Base):
+    __tablename__ = 'wto_athlete_map'
+    id = Column(Integer, primary_key=True)
+    podium_athlete_id = Column(Integer, ForeignKey('athletes.id', ondelete='CASCADE'), unique=True, index=True)
+    podium_name = Column(String)
+    wto_athlete_id = Column(Integer, index=True)
+    wto_full_name = Column(String)
+    matched_method = Column(String)  # e.g., 'exact', 'normalized', 'manual'
+    confirmed_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class WTORaceResult(Base):
+    __tablename__ = 'wto_race_results'
+    id = Column(Integer, primary_key=True)
+    podium_athlete_id = Column(Integer, ForeignKey('athletes.id', ondelete='CASCADE'), index=True)
+    wto_athlete_id = Column(Integer, index=True)
+    event_id = Column(Integer, index=True)
+    prog_id = Column(Integer, index=True)
+
+    event_date = Column(Date, index=True)
+    event_name = Column(String)
+    prog_name = Column(String)
+    prog_distance_category = Column(String)
+
+    finish_status = Column(String)
+    finish_position = Column(Integer)
+    position_sort = Column(Integer)
+    total_time = Column(String)
+    swim_time = Column(String)
+    t1_time = Column(String)
+    bike_time = Column(String)
+    t2_time = Column(String)
+    run_time = Column(String)
+
+    raw_json = Column(JSON)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

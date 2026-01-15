@@ -628,3 +628,40 @@ def get_compliance_for_day(athlete_id: int, target_date: date) -> Optional[Dict[
             "workout_date": target_date.isoformat(),
             "records": [_serialize(record) for record in exact_records],
         }
+
+
+def get_compliance_for_range(
+    athlete_id: int,
+    start_date: date,
+    end_date: date,
+) -> Dict[str, Any]:
+    """Return workout compliance records across an inclusive date range."""
+    with get_session() as session:
+        def _serialize(record: WorkoutCompliance) -> Dict[str, Any]:
+            return {
+                "athlete_id": record.athlete_id,
+                "workout_id": record.workout_id,
+                "workout_date": record.workout_date.isoformat() if record.workout_date else None,
+                "sport": record.sport,
+                "planned": record.planned_summary,
+                "actual": record.actual_summary,
+                "metrics": record.metrics,
+                "overall_score": record.overall_score,
+                "notes": record.evaluation_notes,
+                "updated_at": record.updated_at.isoformat() if record.updated_at else None,
+            }
+
+        stmt = (
+            select(WorkoutCompliance)
+            .where(WorkoutCompliance.athlete_id == athlete_id)
+            .where(WorkoutCompliance.workout_date >= start_date)
+            .where(WorkoutCompliance.workout_date <= end_date)
+            .order_by(WorkoutCompliance.workout_date.desc(), WorkoutCompliance.updated_at.desc())
+        )
+        records = session.execute(stmt).scalars().all()
+
+    return {
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "records": [_serialize(r) for r in records],
+    }

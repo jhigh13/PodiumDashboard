@@ -40,7 +40,15 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
     if not _get_token(athlete.id) and _find_coach_token() and not tp_athlete_id:
         raise RuntimeError("Selected athlete has no TrainingPeaks ID yet. Fetch roster first or set tp_athlete_id.")
 
-    workouts = api.fetch_workouts(start, end, tp_athlete_id=tp_athlete_id)
+    try:
+        workouts = api.fetch_workouts(start, end, tp_athlete_id=tp_athlete_id)
+    except RuntimeError as e:
+        # Some athletes may be inaccessible under a coach token or in sandbox.
+        if "403 forbidden" in str(e).lower():
+            print(f"⚠️  Workouts unavailable for athlete {athlete.name} (403). Skipping workouts.")
+            workouts = []
+        else:
+            raise
     workouts_fetched = len(workouts)
     first_workout_keys = list(workouts[0].keys()) if workouts else []
     first_workout_sample = None
@@ -148,16 +156,35 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
                 session.commit()
             tp_athlete_id = inferred_id
 
-    # Metrics range (same period) - we will store ALL metrics for the date range
-    try:
-        metrics = api.fetch_daily_metrics_range(start, end, tp_athlete_id=tp_athlete_id)
-    except RuntimeError as e:
-        # Handle non-premium athlete errors gracefully
-        if "403 Forbidden" in str(e) and "premium athletes" in str(e).lower():
-            metrics = None
-            print(f"⚠️  Athlete {athlete.name} is not a premium athlete - metrics unavailable")
-        else:
-            raise
+    # Metrics range (same period) - premium-only for many athletes.
+    # If we already learned metrics are unavailable, skip calling the endpoint.
+    metrics = None
+    if getattr(athlete, "tp_metrics_available", None) is not False:
+        try:
+            metrics = api.fetch_daily_metrics_range(start, end, tp_athlete_id=tp_athlete_id)
+            # If we reached the endpoint without a premium restriction, mark metrics as available.
+            from sqlalchemy import text
+            with get_session() as session:
+                session.execute(text("UPDATE athletes SET tp_metrics_available = TRUE WHERE id = :id"), {"id": athlete.id})
+                session.commit()
+        except RuntimeError as e:
+            # Handle non-premium athlete errors gracefully
+            if "premium" in str(e).lower():
+                metrics = None
+                print(f"⚠️  Athlete {athlete.name} is not a premium athlete - metrics unavailable")
+                from sqlalchemy import text
+                with get_session() as session:
+                    session.execute(text("UPDATE athletes SET tp_metrics_available = FALSE WHERE id = :id"), {"id": athlete.id})
+                    session.commit()
+            elif "403 forbidden" in str(e).lower():
+                metrics = None
+                print(f"⚠️  Metrics unavailable for athlete {athlete.name} (403). Skipping metrics.")
+                from sqlalchemy import text
+                with get_session() as session:
+                    session.execute(text("UPDATE athletes SET tp_metrics_available = FALSE WHERE id = :id"), {"id": athlete.id})
+                    session.commit()
+            else:
+                raise
     
     metrics_fetched = len(metrics) if metrics else 0
     metrics_saved = 0
@@ -332,6 +359,9 @@ def ingest_historical_full(days_back: int = 365, athlete_id: int | None = None, 
     saved_m = 0
     failed_segments = []
 
+    metrics_allowed = getattr(athlete, "tp_metrics_available", None) is not False
+    workouts_allowed = True
+
     # Partition into segments if requested
     segments = max(1, int(segments))
     total_days = (end_date - start_date).days + 1
@@ -345,16 +375,36 @@ def ingest_historical_full(days_back: int = 365, athlete_id: int | None = None, 
         ranges.append((seg_start, seg_end))
 
     for seg_start, seg_end in ranges:
-        try:
-            w_items = api.fetch_workouts(seg_start, seg_end, tp_athlete_id=tp_athlete_id)
-            _store_workouts(w_items)
-        except Exception as e:  # noqa: BLE001
-            failed_segments.append({"type": "workouts", "range": f"{seg_start}..{seg_end}", "error": str(e)})
-        try:
-            m_items = api.fetch_daily_metrics_range(seg_start, seg_end, tp_athlete_id=tp_athlete_id)
-            _store_metrics(m_items)
-        except Exception as e:  # noqa: BLE001
-            failed_segments.append({"type": "metrics", "range": f"{seg_start}..{seg_end}", "error": str(e)})
+        if workouts_allowed:
+            try:
+                w_items = api.fetch_workouts(seg_start, seg_end, tp_athlete_id=tp_athlete_id)
+                _store_workouts(w_items)
+            except Exception as e:  # noqa: BLE001
+                msg = str(e).lower()
+                failed_segments.append({"type": "workouts", "range": f"{seg_start}..{seg_end}", "error": str(e)})
+                if "403 forbidden" in msg:
+                    # Avoid hammering the same forbidden endpoint over and over.
+                    workouts_allowed = False
+        if metrics_allowed:
+            try:
+                m_items = api.fetch_daily_metrics_range(seg_start, seg_end, tp_athlete_id=tp_athlete_id)
+                _store_metrics(m_items)
+                # If we reached the endpoint successfully, mark metrics as available.
+                from sqlalchemy import text
+                with get_session() as session:
+                    session.execute(text("UPDATE athletes SET tp_metrics_available = TRUE WHERE id = :id"), {"id": athlete.id})
+                    session.commit()
+            except Exception as e:  # noqa: BLE001
+                msg = str(e).lower()
+                if "premium" in msg or "403 forbidden" in msg:
+                    metrics_allowed = False
+                    from sqlalchemy import text
+                    with get_session() as session:
+                        session.execute(text("UPDATE athletes SET tp_metrics_available = FALSE WHERE id = :id"), {"id": athlete.id})
+                        session.commit()
+                    # Do not count as a failed segment; this is an expected restriction.
+                else:
+                    failed_segments.append({"type": "metrics", "range": f"{seg_start}..{seg_end}", "error": str(e)})
 
     return {
         "tp_athlete_id": tp_athlete_id,

@@ -7,6 +7,11 @@ from app.auth.oauth import refresh_token as oauth_refresh
 
 API_BASE = settings.tp_api_base.rstrip('/')
 
+
+# In-process caches to avoid repeatedly calling premium/forbidden endpoints.
+_NON_PREMIUM_METRICS_TP_IDS: set[int] = set()
+_METRICS_PREMIUM_WARNED_TP_IDS: set[int] = set()
+
 class TrainingPeaksAPI:
     def __init__(self, athlete_id: int):
         self.athlete_id = athlete_id
@@ -117,10 +122,24 @@ class TrainingPeaksAPI:
         # Coach tokens WITH metrics:read scope CAN use athlete-scoped endpoints
         def call_segment(s: date, e: date):
             if tp_athlete_id:
+                if int(tp_athlete_id) in _NON_PREMIUM_METRICS_TP_IDS:
+                    return []
                 # Use athlete-scoped endpoint (works for both athlete tokens and coach tokens with proper permissions)
                 url = f"{API_BASE}/v2/metrics/{tp_athlete_id}/{s.isoformat()}/{e.isoformat()}"
                 headers = self._headers()
                 r = requests.get(url, headers=headers, timeout=30)
+
+                # Handle premium-only restriction early to avoid noisy debug logging.
+                if r.status_code == 403:
+                    response_text = (r.text or "").lower()
+                    if "premium" in response_text:
+                        _NON_PREMIUM_METRICS_TP_IDS.add(int(tp_athlete_id))
+                        if int(tp_athlete_id) not in _METRICS_PREMIUM_WARNED_TP_IDS:
+                            _METRICS_PREMIUM_WARNED_TP_IDS.add(int(tp_athlete_id))
+                            print(f"⚠️  Metrics unavailable (non-premium) for TP athlete {tp_athlete_id}; skipping metrics.")
+                        raise RuntimeError(
+                            f"403 Forbidden: This data is only available for premium athletes (athlete {tp_athlete_id})"
+                        )
                 
                 # DEBUG: Log details on non-200/404 responses
                 if r.status_code not in (200, 404):
@@ -140,11 +159,12 @@ class TrainingPeaksAPI:
                 if r.status_code == 404:
                     return []
                 if r.status_code == 403:
-                    # Check if this is a premium-only restriction
-                    response_text = r.text.lower()
+                    response_text = (r.text or "").lower()
                     if "premium" in response_text:
-                        # Non-premium athlete, return empty gracefully
-                        raise RuntimeError(f"403 Forbidden: This data is only available for premium athletes (athlete {tp_athlete_id})")
+                        _NON_PREMIUM_METRICS_TP_IDS.add(int(tp_athlete_id))
+                        raise RuntimeError(
+                            f"403 Forbidden: This data is only available for premium athletes (athlete {tp_athlete_id})"
+                        )
                     # Other 403 errors (token/permission issues)
                     token_row = get_token(self.athlete_id) or find_coach_token()
                     scope = getattr(token_row, 'scope', 'unknown') if token_row else 'no token'

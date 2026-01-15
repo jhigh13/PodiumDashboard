@@ -33,6 +33,11 @@ def ensure_schema():
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE athletes ADD COLUMN tp_athlete_id INTEGER"))
 
+    # athletes.tp_metrics_available (Boolean) used to skip premium-only metrics calls
+    if 'tp_metrics_available' not in athlete_cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE athletes ADD COLUMN tp_metrics_available BOOLEAN"))
+
 def init_db():
     """Create tables then apply simple schema patches if needed, with transient retry."""
     backoffs = [1, 3, 5]

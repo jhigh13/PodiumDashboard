@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     openai_api_key: str = Field("", alias="OPENAI_API_KEY")
     openai_model: str = Field("gpt-5-nano", alias="OPENAI_MODEL")
 
+    # Optional: external canonical triathlon results database (read-only recommended)
+    triathlon_database_url: str = Field("", alias="TRIATHLON_DATABASE_URL")
+
     class Config:
         case_sensitive = False
         env_file = str(PROJECT_ROOT / ".env")
