@@ -124,10 +124,9 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
                 # Update raw payload for existing entries so compliance has latest data
                 record.raw_json = w or record.raw_json
 
-            # Calculate compliance for new workouts only
-            compliance_summary = None
-            if is_new_record:
-                compliance_summary = upsert_workout_compliance(session, record)
+            # Calculate compliance during ingest so the dashboard can render quickly.
+            # Also recompute for existing workouts so logic fixes/backfills apply after a sync.
+            compliance_summary = upsert_workout_compliance(session, record)
             if compliance_summary:
                 compliance_updates.append({
                     "workout_id": workout_id,

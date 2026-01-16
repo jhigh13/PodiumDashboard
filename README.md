@@ -26,6 +26,26 @@ Python, Streamlit, Authlib, SQLAlchemy, Postgres (Supabase), APScheduler, Resend
 5. Redirect URI now uses root path `http://localhost:8501/` so the app can process `?code=` directly (Streamlit cannot serve `/oauth/callback`).
 6. Tables are auto-created on first run via `Base.metadata.create_all()` (no Alembic yet).
 
+## FastAPI + HTMX (Migration Prototype)
+
+This repo now includes an early FastAPI + HTMX web UI prototype (Streamlit remains available).
+
+1. Ensure your `.env` includes a separate web redirect URI:
+   - `TP_WEB_REDIRECT_URI=http://localhost:8000/oauth/callback`
+2. Start the web server:
+   ```bash
+   uvicorn app.webapp.app:app --reload --port 8000
+   ```
+3. Start the worker (required for background roster/training sync jobs):
+   ```bash
+   python podium_worker.py
+   ```
+4. Open `http://localhost:8000/login`.
+
+Notes:
+- Coach login auto-enqueues a roster sync job on first login; the worker must be running to populate the coach roster.
+- The job queue is stored in Postgres (`jobs` table) and uses row locking so multiple workers can be run later.
+
 ## Data Model (Initial Draft)
 Tables (to be created via Alembic):
 - athletes(id, external_id, name, email, created_at)

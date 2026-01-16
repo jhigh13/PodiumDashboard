@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Login • Podium Dashboard</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; background: #0b1020; color: #e8eefc; }
+      .card { background: #121a33; border: 1px solid #25315b; border-radius: 12px; padding: 16px; max-width: 680px; }
+      .btn { background: #2b5cff; border: 0; color: white; padding: 10px 14px; border-radius: 10px; cursor: pointer; }
+      .btn.secondary { background: #223056; }
+      .muted { color: #a8b3d6; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2 style="margin-top:0;">Login</h2>
+      <p class="muted">Sign in with TrainingPeaks OAuth (sandbox or production depending on your TP endpoints).</p>
+
+      <form method="post" action="/login/start" style="display:flex; gap:12px; flex-wrap:wrap;">
+        <input type="hidden" name="role" value="athlete" />
+        <button class="btn" type="submit">Login as Athlete</button>
+      </form>
+
+      <div style="height:10px;"></div>
+
+      <form method="post" action="/login/start" style="display:flex; gap:12px; flex-wrap:wrap;">
+        <input type="hidden" name="role" value="coach" />
+        <button class="btn secondary" type="submit">Login as Coach</button>
+      </form>
+
+      <div style="margin-top:16px;" class="muted">
+        Tip: your browser host must match <code>TP_WEB_REDIRECT_URI</code> exactly.
+        If you open the app at <code>127.0.0.1</code> but TP redirects to <code>localhost</code> (or vice-versa), login state can be lost.
+        Current base URL: <code>{{ request.base_url }}</code>
+      </div>
+    </div>
+  </body>
+</html>

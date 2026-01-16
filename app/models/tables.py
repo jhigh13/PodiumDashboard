@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Date, Float, JSON, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Date, Float, JSON, Boolean, UniqueConstraint
 from sqlalchemy.sql import func
 from .base import Base
 
@@ -192,3 +192,38 @@ class WTORaceResult(Base):
 
     raw_json = Column(JSON)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class CoachRosterMember(Base):
+    __tablename__ = 'coach_roster_members'
+    __table_args__ = (
+        UniqueConstraint('coach_athlete_id', 'athlete_id', name='uq_coach_roster_member'),
+    )
+
+    id = Column(Integer, primary_key=True)
+    coach_athlete_id = Column(Integer, ForeignKey('athletes.id', ondelete='CASCADE'), index=True, nullable=False)
+    athlete_id = Column(Integer, ForeignKey('athletes.id', ondelete='CASCADE'), index=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Job(Base):
+    __tablename__ = 'jobs'
+
+    id = Column(Integer, primary_key=True)
+    job_type = Column(String(50), index=True, nullable=False)
+    status = Column(String(20), index=True, nullable=False, default='queued')
+
+    # Who requested this job (the logged-in identity; for coach jobs this is the coach athlete id)
+    requested_by_athlete_id = Column(Integer, ForeignKey('athletes.id', ondelete='SET NULL'), index=True)
+
+    # Optional target athlete (e.g., sync a specific roster athlete)
+    target_athlete_id = Column(Integer, ForeignKey('athletes.id', ondelete='SET NULL'), index=True)
+
+    payload = Column(JSON)
+    result = Column(JSON)
+    error = Column(String)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    started_at = Column(DateTime(timezone=True))
+    finished_at = Column(DateTime(timezone=True))
+    heartbeat_at = Column(DateTime(timezone=True))

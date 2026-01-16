@@ -1,0 +1,16 @@
+{% if not job %}
+  <div class="muted">Job not found.</div>
+{% else %}
+  {% if job.status in ['queued', 'running'] %}
+    <div class="muted"
+      hx-get="/partials/job_status?job_id={{ job.id }}"
+      hx-trigger="load delay:1s"
+      hx-swap="outerHTML">
+      Job {{ job.id }}: <strong>{{ job.status }}</strong> ({{ job.job_type }})
+    </div>
+  {% elif job.status == 'succeeded' %}
+    <div>Job {{ job.id }}: <strong>succeeded</strong></div>
+  {% else %}
+    <div>Job {{ job.id }}: <strong>{{ job.status }}</strong> — {{ job.error }}</div>
+  {% endif %}
+{% endif %}

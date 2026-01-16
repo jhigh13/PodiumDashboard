@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     tp_auth_base: str = Field("https://oauth.sandbox.trainingpeaks.com", alias="TP_AUTH_BASE")
     tp_api_base: str = Field("https://api.sandbox.trainingpeaks.com", alias="TP_API_BASE")
     tp_redirect_uri: str = Field("http://localhost:8501/", alias="TP_REDIRECT_URI")
+    # Web app redirect URI (FastAPI). Keep Streamlit redirect separate.
+    tp_web_redirect_uri: str = Field("http://localhost:8000/oauth/callback", alias="TP_WEB_REDIRECT_URI")
     tp_scope: str = Field("athlete:profile metrics:read workouts:read workouts:details", alias="TP_SCOPE")
     # Never hardcode secrets in source control. Require via environment.
     database_url: str = Field("", alias="DATABASE_URL")

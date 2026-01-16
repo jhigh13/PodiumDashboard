@@ -1,0 +1,26 @@
+{% if workouts | length == 0 %}
+  <div class="muted">No workouts in range.</div>
+{% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Sport</th>
+        <th>Duration (sec)</th>
+        <th>TSS</th>
+        <th>IF</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for w in workouts %}
+        <tr>
+          <td>{{ w.date }}</td>
+          <td>{{ w.sport }}</td>
+          <td>{{ w.duration_sec or '' }}</td>
+          <td>{{ '%.1f'|format(w.tss) if w.tss is not none else '' }}</td>
+          <td>{{ '%.2f'|format(w.intensity_factor) if w.intensity_factor is not none else '' }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}

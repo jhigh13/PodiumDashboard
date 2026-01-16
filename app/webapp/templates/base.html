@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ title or 'Podium Dashboard' }}</title>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <style>
+      :root {
+        --bg: #f6f7fb;
+        --text: #0f172a;
+        --muted: #475569;
+        --card: #ffffff;
+        --border: #e2e8f0;
+        --border-strong: #cbd5e1;
+        --link: #2563eb;
+        --btn: #2563eb;
+        --btn-text: #ffffff;
+        --btn-secondary: #e2e8f0;
+        --btn-secondary-text: #0f172a;
+        --input-bg: #ffffff;
+        --input-text: #0f172a;
+      }
+
+      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 0; background: var(--bg); color: var(--text); }
+      a { color: var(--link); }
+      .container { max-width: 1320px; margin: 0 auto; padding: 20px 22px; }
+
+      .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+      .row { display: flex; gap: 16px; flex-wrap: wrap; }
+      .col { flex: 1 1 360px; }
+      .btn { background: var(--btn); border: 0; color: var(--btn-text); padding: 10px 14px; border-radius: 10px; cursor: pointer; }
+      .btn.secondary { background: var(--btn-secondary); color: var(--btn-secondary-text); }
+      input, select { padding: 8px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--input-bg); color: var(--input-text); }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { padding: 8px; border-bottom: 1px solid var(--border); text-align: left; font-size: 14px; }
+      th { color: #0f172a; background: #f1f5f9; border-bottom: 1px solid var(--border-strong); }
+      .muted { color: var(--muted); }
+      .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border-strong); }
+      .badge.green { border-color: #16a34a; color: #166534; background: #dcfce7; }
+      .badge.yellow { border-color: #ca8a04; color: #92400e; background: #ffedd5; }
+      .badge.red { border-color: #dc2626; color: #7f1d1d; background: #fee2e2; }
+      .badge.gray { border-color: #94a3b8; color: #334155; background: #f1f5f9; }
+      .kpi-row { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 12px; align-items: center; justify-items: center; }
+      .kpi { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+      .kpi .circle { width: 60px; height: 60px; border-radius: 999px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 22px; }
+      .kpi .label { font-size: 14px; color: var(--muted); font-weight: 750; }
+      .divider { height: 1px; background: var(--border); margin: 12px 0; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="row" style="align-items:center; justify-content:space-between;">
+        <div>
+          <h2 style="margin:0;">Podium Dashboard</h2>
+          <div class="muted">FastAPI + HTMX prototype</div>
+        </div>
+        <form method="post" action="/logout">
+          <button class="btn secondary" type="submit">Logout</button>
+        </form>
+      </div>
+
+      {% block content %}{% endblock %}
+    </div>
+  </body>
+</html>

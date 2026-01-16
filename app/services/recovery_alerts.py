@@ -11,7 +11,7 @@ from app.data.db import get_session
 from app.models.tables import DailyMetric, EmailLog
 from app.services.baseline import METRIC_CONFIGS, get_baseline
 from app.services.email import email_client
-from app.utils.dates import get_effective_today
+from app.utils import dates as dates_util
 from app.utils.settings import settings
 
 ALERT_EMAIL_TYPE = "recovery_alert"
@@ -108,7 +108,7 @@ def evaluate_recovery_alert(
     send_email: bool = True,
 ) -> Dict[str, object]:
     """Evaluate recovery metrics and send an alert if all conditions breach."""
-    check_date = check_date or get_effective_today()
+    check_date = check_date or dates_util.get_effective_today()
 
     with get_session() as session:
         metric = session.execute(

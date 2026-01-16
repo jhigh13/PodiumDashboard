@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="card">
+    <h3 style="margin-top:0;">Coach Dashboard</h3>
+    <div class="muted">Logged in as: {{ coach.name }} (id: {{ coach.id }}, TP: {{ coach.tp_athlete_id }})</div>
+    <div class="muted">Roster size: {{ roster | length }}</div>
+  </div>
+
+  <div class="card">
+    {% if roster | length == 0 %}
+      <div class="muted">Roster is empty. A roster sync job is enqueued automatically after login; start the worker to process it.</div>
+      <div class="muted" style="margin-top:8px;">Run: <code>python podium_worker.py</code></div>
+    {% else %}
+      <form id="controls" style="display:flex; gap:12px; flex-wrap:wrap; align-items:end;">
+        <div>
+          <div class="muted">Athlete</div>
+          <select id="target_athlete_id" name="target_athlete_id">
+            {% for a in roster %}
+              <option value="{{ a.id }}">{{ a.name }} (id:{{ a.id }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <div class="muted">Start</div>
+          <input id="start" name="start" type="date" value="{{ (request.query_params.get('start') or default_start or '') }}" />
+        </div>
+        <div>
+          <div class="muted">End</div>
+          <input id="end" name="end" type="date" value="{{ (request.query_params.get('end') or default_end or '') }}" />
+        </div>
+        <button class="btn" id="refresh-panels" type="button">Refresh Panels</button>
+      </form>
+
+      <div class="card" style="margin-top:16px;">
+        <h4 style="margin-top:0;">Sync Now</h4>
+        <form hx-post="/jobs/sync_recent" hx-target="#job-status" hx-swap="innerHTML" style="display:flex; gap:12px; flex-wrap:wrap;">
+          <input type="hidden" name="target_athlete_id" id="job_target_athlete_id" value="{{ roster[0].id }}" />
+          <div>
+            <div class="muted">Days</div>
+            <input type="number" name="days" value="7" min="1" max="365" />
+          </div>
+          <button class="btn" type="submit">Enqueue Sync</button>
+        </form>
+        <div id="job-status" class="muted" style="margin-top:10px;">No job yet.</div>
+      </div>
+
+      <div class="card">
+        <h4 style="margin-top:0;">Compliance (Today)</h4>
+        <div
+          id="compliance"
+          class="muted"
+          hx-get="/partials/compliance_today"
+          hx-trigger="load, change from:#target_athlete_id, click from:#refresh-panels"
+          hx-include="#controls"
+          hx-target="this"
+          hx-swap="innerHTML"
+        >Choose athlete to load compliance.</div>
+      </div>
+
+      <div class="row">
+        <div class="col">
+          <div class="card">
+            <h4 style="margin-top:0;">Workouts</h4>
+            <div
+              id="workouts"
+              class="muted"
+              hx-get="/partials/workouts"
+              hx-trigger="click from:#refresh-panels"
+              hx-include="#controls"
+              hx-target="this"
+              hx-swap="innerHTML"
+            >Choose athlete + range, then refresh.</div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card">
+            <h4 style="margin-top:0;">Daily Metrics</h4>
+            <div
+              id="metrics"
+              class="muted"
+              hx-get="/partials/metrics"
+              hx-trigger="click from:#refresh-panels"
+              hx-include="#controls"
+              hx-target="this"
+              hx-swap="innerHTML"
+            >Choose athlete + range, then refresh.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h4 style="margin-top:0;">Alerts</h4>
+        <div
+          id="alerts"
+          class="muted"
+          hx-get="/partials/alerts?days=14"
+          hx-trigger="click from:#refresh-panels"
+          hx-include="#controls"
+          hx-target="this"
+          hx-swap="innerHTML"
+        >Choose athlete, then refresh.</div>
+      </div>
+
+      <script>
+        // Keep the job form in sync with the selected athlete.
+        document.getElementById('target_athlete_id').addEventListener('change', function() {
+          document.getElementById('job_target_athlete_id').value = document.getElementById('target_athlete_id').value;
+        });
+      </script>
+
+      <div class="muted" style="margin-top:8px;">Tip: set start/end in URL query (e.g. <code>?start=2026-01-01&end=2026-01-15</code>).</div>
+    {% endif %}
+  </div>
+{% endblock %}

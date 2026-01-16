@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="card">
+    <h3 style="margin-top:0;">Athlete Dashboard</h3>
+    <div class="muted">Logged in as: {{ athlete.name }} (id: {{ athlete.id }}, TP: {{ athlete.tp_athlete_id }})</div>
+  </div>
+
+  <div class="card">
+    <form id="range" style="display:flex; gap:12px; flex-wrap:wrap; align-items:end;">
+      <div>
+        <div class="muted">Start</div>
+        <input name="start" type="date" value="{{ (request.query_params.get('start') or default_start or '') }}" />
+      </div>
+      <div>
+        <div class="muted">End</div>
+        <input name="end" type="date" value="{{ (request.query_params.get('end') or default_end or '') }}" />
+      </div>
+      <button class="btn" type="button" onclick="loadAthletePanels();">Refresh Panels</button>
+    </form>
+
+    <div class="muted" style="margin-top:10px;">Tip: set start/end above, then refresh.</div>
+  </div>
+
+  <div class="row">
+    <div class="col">
+      <div class="card">
+        <h4 style="margin-top:0;">Workouts</h4>
+        <div id="workouts" class="muted">Click “Load Workouts”.</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card">
+        <h4 style="margin-top:0;">Daily Metrics</h4>
+        <div id="metrics" class="muted">Click “Load Metrics”.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function loadAthletePanels() {
+      const start = document.querySelector('input[name="start"]').value;
+      const end = document.querySelector('input[name="end"]').value;
+      if (!start || !end) {
+        alert('Set start and end dates.');
+        return;
+      }
+      htmx.ajax('GET', `/partials/workouts?target_athlete_id={{ athlete.id }}&start=${start}&end=${end}`, '#workouts');
+      htmx.ajax('GET', `/partials/metrics?target_athlete_id={{ athlete.id }}&start=${start}&end=${end}`, '#metrics');
+    }
+  </script>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% if alerts | length == 0 %}
+  <div class="muted">No alerts found.</div>
+{% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Metric</th>
+        <th>Type</th>
+        <th>Severity</th>
+        <th>Message</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in alerts %}
+        <tr>
+          <td>{{ a.alert_date }}</td>
+          <td>{{ a.metric_name }}</td>
+          <td>{{ a.alert_type }}</td>
+          <td>
+            {% if a.severity == 'green' %}<span class="badge green">green</span>{% endif %}
+            {% if a.severity == 'yellow' %}<span class="badge yellow">yellow</span>{% endif %}
+            {% if a.severity == 'red' %}<span class="badge red">red</span>{% endif %}
+          </td>
+          <td>{{ a.message }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
