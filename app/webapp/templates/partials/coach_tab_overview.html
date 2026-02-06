@@ -1,0 +1,46 @@
+<div class="card">
+  <h4 style="margin-top:0;">Roster Overview</h4>
+  <div class="muted" style="margin-bottom:10px;">Quick scan of who needs attention today (missed workouts, low compliance, fatigue flags, metric alerts).</div>
+
+  <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end; margin: 8px 0 12px 0;">
+    <form id="overview-controls" style="display:flex; gap:12px; flex-wrap:wrap; align-items:end;">
+      <div>
+        <div class="muted">Day</div>
+        <input
+          id="overview_day"
+          name="day"
+          type="date"
+          value="{{ (request.query_params.get('day') or default_overview_date or '') }}"
+        />
+      </div>
+    </form>
+
+    <div style="flex:1 1 auto;"></div>
+
+    <form
+      id="overview-sync-form"
+      hx-post="/jobs/sync_roster_recent"
+      hx-target="#overview-job-status"
+      hx-swap="innerHTML"
+      style="display:flex; gap:10px; align-items:end;"
+    >
+      <div>
+        <div class="muted">Days</div>
+        <input type="number" name="days" value="7" min="1" max="365" />
+      </div>
+      <button class="btn secondary" type="submit">Sync Whole Roster</button>
+    </form>
+  </div>
+
+  <div id="overview-job-status" class="muted" style="margin: 0 0 10px 0;">No roster sync job yet.</div>
+
+  <div
+    id="coach-overview"
+    class="muted"
+    hx-get="/partials/coach_overview"
+    hx-trigger="load, change from:#overview_day, click from:#refresh-panels, podiumRefresh from:body"
+    hx-include="#overview-controls"
+    hx-target="this"
+    hx-swap="innerHTML"
+  >Loading roster overview…</div>
+</div>

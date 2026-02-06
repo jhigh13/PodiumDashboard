@@ -1,0 +1,110 @@
+<div>
+  <div style="display:flex; gap:10px; align-items:baseline; justify-content:space-between; flex-wrap:wrap;">
+    <div>
+      <div class="muted" style="font-size:12px;">Day</div>
+      <div><strong>{{ day }}</strong></div>
+    </div>
+    <div class="muted" style="font-size:12px;">Roster: {{ totals.roster_size }} athletes</div>
+  </div>
+
+  <div class="divider" style="margin:12px 0;"></div>
+
+  <div style="display:flex; gap:10px; flex-wrap:wrap;">
+    <div class="card" style="padding:10px; flex: 1 1 180px;">
+      <div class="muted" style="font-size:12px;">Athletes with <span class="badge red">red</span> workout</div>
+      <div style="font-size:22px; font-weight:700;">{{ totals.athletes_with_red_workout }}</div>
+    </div>
+    <div class="card" style="padding:10px; flex: 1 1 180px;">
+      <div class="muted" style="font-size:12px;">Athletes with missed workout</div>
+      <div style="font-size:22px; font-weight:700;">{{ totals.athletes_with_missed_workout }}</div>
+    </div>
+    <div class="card" style="padding:10px; flex: 1 1 180px;">
+      <div class="muted" style="font-size:12px;">Fatigue flags triggered</div>
+      <div style="font-size:22px; font-weight:700;">{{ totals.athletes_with_fatigue_flag }}</div>
+    </div>
+    <div class="card" style="padding:10px; flex: 1 1 180px;">
+      <div class="muted" style="font-size:12px;">Metric alerts (yellow/red)</div>
+      <div style="font-size:22px; font-weight:700;">{{ totals.athletes_with_metric_alert }}</div>
+    </div>
+  </div>
+
+  <div style="margin-top:12px;">
+    <div class="muted" style="font-size:12px; margin-bottom:6px;">Details</div>
+
+    {% if rows | length == 0 %}
+      <div class="muted">No roster athletes found.</div>
+    {% else %}
+      <div style="overflow:auto;">
+        <table style="width:100%; border-collapse:collapse;">
+          <thead>
+            <tr class="muted" style="text-align:left; font-size:12px;">
+              <th style="padding:8px 6px;">Athlete</th>
+              <th style="padding:8px 6px;">Status</th>
+              <th style="padding:8px 6px;">Workouts</th>
+              <th style="padding:8px 6px;">Missed</th>
+              <th style="padding:8px 6px;">Red</th>
+              <th style="padding:8px 6px;">Fatigue</th>
+              <th style="padding:8px 6px;">Metric Alerts</th>
+              <th style="padding:8px 6px;"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+              <tr style="border-top:1px solid rgba(255,255,255,0.06);">
+                <td style="padding:8px 6px; white-space:nowrap;">{{ r.athlete_name }}</td>
+                <td style="padding:8px 6px;">
+                  {% if r.status == 'red' %}
+                    <span class="badge red">Needs attention</span>
+                  {% elif r.status == 'yellow' %}
+                    <span class="badge yellow">Watch</span>
+                  {% elif r.status == 'green' %}
+                    <span class="badge green">OK</span>
+                  {% else %}
+                    <span class="badge blue">No data</span>
+                  {% endif %}
+                </td>
+                <td style="padding:8px 6px;">{{ r.workouts_total }}</td>
+                <td style="padding:8px 6px;">{{ r.workouts_missed }}</td>
+                <td style="padding:8px 6px;">{{ r.workouts_red }}</td>
+                <td style="padding:8px 6px;">
+                  {% if r.fatigue_triggered %}
+                    <span class="badge red">Triggered</span>
+                  {% else %}
+                    <span class="muted">—</span>
+                  {% endif %}
+                </td>
+                <td style="padding:8px 6px;">
+                  {% if r.metric_red > 0 %}<span class="badge red">R: {{ r.metric_red }}</span>{% endif %}
+                  {% if r.metric_yellow > 0 %}<span class="badge yellow">Y: {{ r.metric_yellow }}</span>{% endif %}
+                  {% if r.metric_red == 0 and r.metric_yellow == 0 %}<span class="muted">—</span>{% endif %}
+                </td>
+                <td style="padding:8px 6px; text-align:right;">
+                  <button
+                    class="btn secondary"
+                    type="button"
+                    onclick="(function(){
+                      const sel = document.getElementById('target_athlete_id');
+                      const day = document.getElementById('overview_day');
+                      if (!sel) return;
+                      sel.value = '{{ r.athlete_id }}';
+                      sel.dispatchEvent(new Event('change'));
+
+                      const dayValue = day ? day.value : '';
+                      if (window.podiumCoachGoToTab) {
+                        const extra = {};
+                        if (dayValue) extra.compliance_date = dayValue;
+                        // Also pass target_athlete_id so the URL reflects state (not required by the endpoint).
+                        extra.target_athlete_id = sel.value;
+                        window.podiumCoachGoToTab('compliance', extra);
+                      }
+                    })();"
+                  >View</button>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+</div>

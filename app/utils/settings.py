@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     tp_auth_base: str = Field("https://oauth.sandbox.trainingpeaks.com", alias="TP_AUTH_BASE")
     tp_api_base: str = Field("https://api.sandbox.trainingpeaks.com", alias="TP_API_BASE")
     tp_redirect_uri: str = Field("http://localhost:8501/", alias="TP_REDIRECT_URI")
+    # Web app redirect URI (FastAPI). Keep Streamlit redirect separate.
+    tp_web_redirect_uri: str = Field("http://localhost:8000/oauth/callback", alias="TP_WEB_REDIRECT_URI")
     tp_scope: str = Field("athlete:profile metrics:read workouts:read workouts:details", alias="TP_SCOPE")
     # Never hardcode secrets in source control. Require via environment.
     database_url: str = Field("", alias="DATABASE_URL")
@@ -21,6 +23,9 @@ class Settings(BaseSettings):
     resend_from_email: str = Field("delivered@resend.dev", alias="RESEND_FROM_EMAIL")
     head_coach_email: str = Field("john.high@usatriathlon.org", alias="HEAD_COACH_EMAIL")
     daily_job_time: str = Field("07:30", alias="DAILY_JOB_TIME")
+    enable_scheduler: bool = Field(False, alias="ENABLE_SCHEDULER")
+    enable_recovery_alert_emails: bool = Field(False, alias="ENABLE_RECOVERY_ALERT_EMAILS")
+    enable_daily_summary_emails: bool = Field(False, alias="ENABLE_DAILY_SUMMARY_EMAILS")
     sandbox_current_day_offset: int = Field(0, alias="SANDBOX_CURRENT_DAY_OFFSET")
     openai_api_key: str = Field("", alias="OPENAI_API_KEY")
     openai_model: str = Field("gpt-5-nano", alias="OPENAI_MODEL")

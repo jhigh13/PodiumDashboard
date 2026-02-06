@@ -9,9 +9,9 @@ from sqlalchemy import select
 
 from app.data.db import get_session
 from app.models.tables import DailyMetric, EmailLog
-from app.services.baseline import METRIC_CONFIGS, get_baseline
+from app.services.baseline import METRIC_CONFIGS, get_baseline_asof
 from app.services.email import email_client
-from app.utils.dates import get_effective_today
+from app.utils import dates as dates_util
 from app.utils.settings import settings
 
 ALERT_EMAIL_TYPE = "recovery_alert"
@@ -61,9 +61,9 @@ def _get_metric_status(metric_name: str, value: Optional[float], threshold: floa
     )
 
 
-def _select_baseline(athlete_id: int, metric_name: str) -> Optional[float]:
+def _select_baseline(athlete_id: int, metric_name: str, as_of_date: date) -> Optional[float]:
     for window in BASELINE_WINDOW_PRIORITY:
-        baseline = get_baseline(athlete_id, metric_name, window)
+        baseline = get_baseline_asof(athlete_id, metric_name, window, as_of_date)
         if baseline and baseline.mean is not None:
             return baseline.mean
     return None
@@ -108,7 +108,7 @@ def evaluate_recovery_alert(
     send_email: bool = True,
 ) -> Dict[str, object]:
     """Evaluate recovery metrics and send an alert if all conditions breach."""
-    check_date = check_date or get_effective_today()
+    check_date = check_date or dates_util.get_effective_today()
 
     with get_session() as session:
         metric = session.execute(
@@ -131,7 +131,7 @@ def evaluate_recovery_alert(
                 name,
                 getattr(metric, config["db_field"]),
                 threshold,
-                _select_baseline(athlete_id, name),
+                _select_baseline(athlete_id, name, check_date),
             )
             for name, config in METRIC_CONFIGS.items()
             if name in {"hrv", "sleep_hours", "rhr"}

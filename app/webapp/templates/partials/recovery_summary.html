@@ -1,0 +1,62 @@
+<div class="card">
+  <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+    <h4 style="margin:0;">Recovery Summary</h4>
+    <div class="muted" style="font-size:13px;">
+      As of: {{ summary.as_of or end }}
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div style="display:grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap:12px;">
+    <div style="border:1px solid var(--border); border-radius:12px; padding:12px;">
+      <div class="muted" style="font-weight:750;">HRV</div>
+      <div style="display:flex; gap:14px; align-items:baseline; flex-wrap:wrap; margin-top:6px;">
+        <div>
+          <div class="muted" style="font-size:12px;">Baseline{% if summary.hrv.baseline_window %} ({{ summary.hrv.baseline_window }}){% endif %}</div>
+          <div style="font-size:22px; font-weight:850;">{{ '%.0f'|format(summary.hrv.baseline) if summary.hrv.baseline is not none else '—' }}</div>
+        </div>
+        <div>
+          <div class="muted" style="font-size:12px;">Current</div>
+          <div style="font-size:22px; font-weight:850;">{{ '%.0f'|format(summary.hrv.current) if summary.hrv.current is not none else '—' }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="border:1px solid var(--border); border-radius:12px; padding:12px;">
+      <div class="muted" style="font-weight:750;">Sleep</div>
+      <div style="display:flex; gap:14px; align-items:baseline; flex-wrap:wrap; margin-top:6px;">
+        <div>
+          <div class="muted" style="font-size:12px;">Baseline{% if summary.sleep.baseline_window %} ({{ summary.sleep.baseline_window }}){% endif %}</div>
+          <div style="font-size:22px; font-weight:850;">{{ '%.1f'|format(summary.sleep.baseline) if summary.sleep.baseline is not none else '—' }}</div>
+        </div>
+        <div>
+          <div class="muted" style="font-size:12px;">Current</div>
+          <div style="font-size:22px; font-weight:850;">{{ '%.1f'|format(summary.sleep.current) if summary.sleep.current is not none else '—' }}</div>
+        </div>
+      </div>
+      <div class="muted" style="font-size:12px; margin-top:4px;">hours</div>
+    </div>
+
+    <div style="border:1px solid var(--border); border-radius:12px; padding:12px;">
+      <div class="muted" style="font-weight:750;">Resting HR</div>
+      <div style="display:flex; gap:14px; align-items:baseline; flex-wrap:wrap; margin-top:6px;">
+        <div>
+          <div class="muted" style="font-size:12px;">Baseline{% if summary.rhr.baseline_window %} ({{ summary.rhr.baseline_window }}){% endif %}</div>
+          <div style="font-size:22px; font-weight:850;">{{ '%.0f'|format(summary.rhr.baseline) if summary.rhr.baseline is not none else '—' }}</div>
+        </div>
+        <div>
+          <div class="muted" style="font-size:12px;">Current</div>
+          <div style="font-size:22px; font-weight:850;">{{ '%.0f'|format(summary.rhr.current) if summary.rhr.current is not none else '—' }}</div>
+        </div>
+      </div>
+      <div class="muted" style="font-size:12px; margin-top:4px;">bpm</div>
+    </div>
+  </div>
+
+  {% if summary.hrv.baseline is none and summary.sleep.baseline is none and summary.rhr.baseline is none %}
+    <div class="muted" style="margin-top:10px;">
+      Baselines not found yet. (Run baseline calculation to populate the baseline metrics table.)
+    </div>
+  {% endif %}
+</div>

@@ -1,0 +1,35 @@
+{% if metrics | length == 0 %}
+  <div class="muted">No metrics in range.</div>
+  {% if available %}
+    <div class="muted" style="margin-top:6px;">
+      Available in DB: {{ available.min }} to {{ available.max }}
+    </div>
+  {% endif %}
+{% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>RHR</th>
+        <th>HRV</th>
+        <th>Sleep</th>
+        <th>CTL</th>
+        <th>ATL</th>
+        <th>TSB</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in metrics %}
+        <tr>
+          <td>{{ m.date }}</td>
+          <td>{{ '%.0f'|format(m.rhr) if m.rhr is not none else '' }}</td>
+          <td>{{ '%.0f'|format(m.hrv) if m.hrv is not none else '' }}</td>
+          <td>{{ '%.1f'|format(m.sleep_hours) if m.sleep_hours is not none else '' }}</td>
+          <td>{{ '%.0f'|format(m.ctl) if m.ctl is not none else '' }}</td>
+          <td>{{ '%.0f'|format(m.atl) if m.atl is not none else '' }}</td>
+          <td>{{ '%.0f'|format(m.tsb) if m.tsb is not none else '' }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}

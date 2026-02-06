@@ -1,0 +1,36 @@
+<div class="card">
+  <h4 style="margin-top:0;">📈 Recovery Metrics Trends</h4>
+
+  {% if not has_data %}
+    <div class="muted">{{ message }}</div>
+  {% else %}
+    <div class="muted" style="margin-bottom:10px;">Rolling averages: 7-day and 90-day. Sleep shows weekly average.</div>
+    <div class="card" style="margin-top:10px;">
+      <h4 style="margin-top:0;">HRV + Sleep</h4>
+      <div id="chart-hrv" data-fig="{{ fig_hrv_json | e }}" style="height:460px;"></div>
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <h4 style="margin-top:0;">Resting Heart Rate + Sleep</h4>
+      <div id="chart-rhr" data-fig="{{ fig_rhr_json | e }}" style="height:460px;"></div>
+    </div>
+
+    <script>
+      (function () {
+        if (typeof Plotly === 'undefined') return;
+
+        function render(divId) {
+          const el = document.getElementById(divId);
+          if (!el) return;
+          const raw = el.dataset.fig;
+          if (!raw) return;
+          const fig = JSON.parse(raw);
+          const config = { displayModeBar: false, responsive: true };
+          Plotly.react(el, fig.data, fig.layout, config);
+        }
+
+        render('chart-hrv');
+        render('chart-rhr');
+      })();
+    </script>
+  {% endif %}
+</div>

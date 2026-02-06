@@ -24,6 +24,11 @@ def start_scheduler():
         _job_started = True
 
 
+def stop_scheduler():
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+
+
 def daily_job():
     """
     Daily automated job that runs at the scheduled time.
@@ -51,17 +56,8 @@ def daily_job():
     print(f"  Effective 'today': {effective_today}")
     print(f"  Ingesting: 1 day (latest)")
     
-    # Step 1: Ingest recent data (1 day)
-    print("\n[1/3] Ingesting latest data from TrainingPeaks...")
-    try:
-        ingest_result = ingest_recent(days=1)
-        print(f"  ✓ Ingestion result: {ingest_result}")
-    except Exception as e:
-        print(f"  ✗ Ingestion failed: {e}")
-        ingest_result = {"error": str(e)}
-    
-    # Step 2: Evaluate and Process for each athlete
-    print("\n[2/3] Processing athletes (Recovery + Compliance + LLM)...")
+    # Step 1: Process each athlete (ingest + baselines + alerts + optional email)
+    print("\n[1/2] Processing athletes (Ingest + Alerts + Compliance)...")
     athletes = list_athletes()
     
     if not athletes:
@@ -72,12 +68,17 @@ def daily_job():
         for athlete in athletes:
             print(f"\n  👤 Processing: {athlete.name} (ID: {athlete.id})")
             try:
+                # A. Ingest latest day for this athlete (also updates baselines + MetricAlerts).
+                ingest_result = ingest_recent(days=1, athlete_id=athlete.id)
+                if ingest_result.get("error"):
+                    print(f"     ⚠️  Ingest error: {ingest_result.get('error')}")
+
                 # A. Recovery Alert (suppress default email)
                 recovery_result = evaluate_recovery_alert(
                     athlete_id=athlete.id,
                     check_date=effective_today,
                     threshold=0.05,
-                    send_email=False 
+                    send_email=bool(settings.enable_recovery_alert_emails),
                 )
                 print(f"     Recovery Triggered: {recovery_result.get('triggered')}")
 
@@ -86,24 +87,24 @@ def daily_job():
                 score = compliance_result.get('records', [{}])[0].get('overall_score') if compliance_result and compliance_result.get('records') else None
                 print(f"     Compliance Score: {score}")
 
-                # C. Generate LLM Summary
-                print("     Generating AI summary...")
-                email_body = llm_client.generate_daily_summary(
-                    athlete_name=athlete.name,
-                    date_str=effective_today.isoformat(),
-                    recovery_data=recovery_result,
-                    compliance_data=compliance_result
-                )
-                
-                # D. Send Email
-                subject = f"Daily Summary: {athlete.name} - {effective_today.isoformat()}"
-                print(f"     Sending email to {settings.head_coach_email}...")
-                send_result = email_client.send_daily_summary(
-                    to_email=settings.head_coach_email,
-                    subject=subject,
-                    body=email_body
-                )
-                print(f"     ✓ Email sent: {send_result.get('status')}")
+                # C. Optional: Generate LLM summary + send daily email
+                if settings.enable_daily_summary_emails:
+                    print("     Generating AI summary...")
+                    email_body = llm_client.generate_daily_summary(
+                        athlete_name=athlete.name,
+                        date_str=effective_today.isoformat(),
+                        recovery_data=recovery_result,
+                        compliance_data=compliance_result,
+                    )
+
+                    subject = f"Daily Summary: {athlete.name} - {effective_today.isoformat()}"
+                    print(f"     Sending email to {settings.head_coach_email}...")
+                    send_result = email_client.send_daily_summary(
+                        to_email=settings.head_coach_email,
+                        subject=subject,
+                        body=email_body,
+                    )
+                    print(f"     ✓ Email sent: {send_result.get('status')}")
 
             except Exception as e:
                 print(f"  ✗ Error processing {athlete.name}: {e}")
@@ -114,6 +115,5 @@ def daily_job():
     
     return {
         "timestamp": timestamp,
-        "ingest_result": ingest_result,
         "athletes_evaluated": len(athletes) if athletes else 0,
     }

@@ -22,6 +22,23 @@ METERS_PER_MILE = 1609.34
 METERS_PER_YARD = 0.9144
 
 
+def _extract_workout_title(raw_workout: Any) -> Optional[str]:
+    if not isinstance(raw_workout, dict):
+        return None
+    title = (
+        raw_workout.get("Title")
+        or raw_workout.get("title")
+        or raw_workout.get("WorkoutName")
+        or raw_workout.get("workoutName")
+        or raw_workout.get("Name")
+        or raw_workout.get("name")
+    )
+    if title is None:
+        return None
+    s = str(title).strip()
+    return s or None
+
+
 def _as_float(value: Any) -> Optional[float]:
     if value is None:
         return None
@@ -59,16 +76,43 @@ def _is_close_to_multiple(value: float, base: float, tolerance: float = 0.5) -> 
     return abs(value - round(value / base) * base) <= tolerance
 
 
-def _normalize_distance_by_sport(sport: str, value: Optional[float]) -> Tuple[Optional[float], Optional[str]]:
+def _infer_swim_distance_unit_from_meters(distance_m: Optional[float]) -> str:
+    """Infer whether a swim distance *authored in yards* was converted to meters.
+
+    TrainingPeaks swim distances appear to be expressed in meters in the API, even when the
+    workout was authored in yards (common in US pools). Yard-authored distances often appear as
+    exact conversions to meters (yards * 0.9144).
+
+    We treat the raw value as meters, and only infer yards when converting back to yards yields
+    a clean, lane-like yard total (multiple of 25) within a small tolerance.
+    """
+    if distance_m is None or distance_m <= 0:
+        return "m"
+    yards = distance_m / METERS_PER_YARD
+    yards_rounded = int(round(yards))
+    if abs(yards - yards_rounded) <= 0.25 and yards_rounded % 25 == 0:
+        return "yd"
+    return "m"
+
+
+def _normalize_distance_by_sport(
+    sport: str,
+    value: Optional[float],
+    preferred_swim_unit: Optional[str] = None,
+) -> Tuple[Optional[float], Optional[str]]:
+    sport_lc = (sport or "").lower()
     if value is None:
-        default_unit = "yd" if sport == "swim" else "mi" if sport in {"run", "bike"} else None
+        if sport_lc == "swim":
+            default_unit = (preferred_swim_unit or "yd")
+        else:
+            default_unit = "mi" if sport_lc in {"run", "bike"} else None
         return None, default_unit
 
-    sport_lc = (sport or "").lower()
     if sport_lc == "swim":
-        if _is_close_to_multiple(value, 25):
-            return float(value), "yd"
-        return float(value) / METERS_PER_YARD, "yd"
+        swim_unit = (preferred_swim_unit or _infer_swim_distance_unit_from_meters(value)).lower()
+        if swim_unit == "yd":
+            return float(value) / METERS_PER_YARD, "yd"
+        return float(value), "m"
     if sport_lc in {"run", "bike"}:
         if value > 50:
             return float(value) / METERS_PER_MILE, "mi"
@@ -144,7 +188,14 @@ def _collect_plan_summary(sport: str, raw_workout: Dict[str, Any]) -> Dict[str, 
     # Extract planned values directly from TrainingPeaks API fields
     planned_duration = _normalize_duration(raw_workout.get('TotalTimePlanned'))
     planned_distance = _as_float(raw_workout.get('DistancePlanned'))  # meters
-    normalized_distance, distance_unit = _normalize_distance_by_sport(sport, planned_distance)
+    preferred_swim_unit = None
+    if (sport or "").lower() == "swim":
+        preferred_swim_unit = _infer_swim_distance_unit_from_meters(planned_distance)
+    normalized_distance, distance_unit = _normalize_distance_by_sport(
+        sport,
+        planned_distance,
+        preferred_swim_unit=preferred_swim_unit,
+    )
     
     # Planned pace/speed/power - typically not in workout list API, but check anyway
     planned_power = _as_float(raw_workout.get('PowerPlanned'))
@@ -197,7 +248,7 @@ def _duration_from_workout(workout: Workout) -> Optional[float]:
     )
 
 
-def _collect_actual_summary(workout: Workout) -> Dict[str, Any]:
+def _collect_actual_summary(workout: Workout, preferred_swim_unit: Optional[str] = None) -> Dict[str, Any]:
     """Extract actual workout values from TrainingPeaks API response.
     
     Only returns actual values if Completed=true, otherwise returns None values.
@@ -224,7 +275,11 @@ def _collect_actual_summary(workout: Workout) -> Dict[str, Any]:
     # Workout was completed - extract actual values
     duration_seconds = _normalize_duration(raw.get('TotalTime'))  # decimal hours -> seconds
     distance = _as_float(raw.get('Distance'))  # meters, actual only
-    normalized_distance, distance_unit = _normalize_distance_by_sport(workout.sport or "", distance)
+    normalized_distance, distance_unit = _normalize_distance_by_sport(
+        workout.sport or "",
+        distance,
+        preferred_swim_unit=preferred_swim_unit,
+    )
     
     avg_speed = _as_float(raw.get('VelocityAverage'))  # m/s
     avg_power = _as_float(raw.get('PowerAverage'))  # watts
@@ -282,10 +337,18 @@ def _metric_entry(
     }
 
 
-def _decorate_metrics(metrics: List[Dict[str, Any]], sport: str) -> None:
+def _decorate_metrics(
+    metrics: List[Dict[str, Any]],
+    sport: str,
+    swim_distance_unit: Optional[str] = None,
+) -> None:
     sport_lc = (sport or "").lower()
-    distance_unit = "yd" if sport_lc == "swim" else "mi" if sport_lc in {"run", "bike"} else "units"
-    pace_unit = "min/100 yd" if sport_lc == "swim" else "min/mi" if sport_lc == "run" else "min"
+    if sport_lc == "swim":
+        distance_unit = (swim_distance_unit or "yd")
+        pace_unit = "min/100 m" if distance_unit == "m" else "min/100 yd"
+    else:
+        distance_unit = "mi" if sport_lc in {"run", "bike"} else "units"
+        pace_unit = "min/mi" if sport_lc == "run" else "min"
 
     for entry in metrics:
         metric = entry.get("metric")
@@ -372,7 +435,9 @@ def _evaluate_swim(planned: Dict[str, Any], actual: Dict[str, Any]) -> List[Dict
             include_in_score=False,  # Display only, not included in compliance score
         )
     )
-    _decorate_metrics(metrics, "swim")
+    # Use the planned unit if present so swim distance/pace label matches our calculation.
+    swim_distance_unit = planned.get("distance_unit") or actual.get("distance_unit")
+    _decorate_metrics(metrics, "swim", swim_distance_unit=swim_distance_unit)
     return metrics
 
 
@@ -534,7 +599,13 @@ def evaluate_workout_compliance(
     
     # Extract planned and actual from same source (TrainingPeaks workout object)
     planned_summary = _collect_plan_summary(sport, raw)
-    actual_summary = _collect_actual_summary(workout)
+    preferred_swim_unit = None
+    if sport == "swim":
+        preferred_swim_unit = planned_summary.get("distance_unit")
+        # If the plan doesn't specify distance, infer from the actual distance.
+        if planned_summary.get("distance_value") is None:
+            preferred_swim_unit = _infer_swim_distance_unit_from_meters(_as_float(raw.get("Distance")))
+    actual_summary = _collect_actual_summary(workout, preferred_swim_unit=preferred_swim_unit)
 
     metrics: List[Dict[str, Any]]
     if sport == "swim":
@@ -596,12 +667,13 @@ def upsert_workout_compliance(
 
 def get_compliance_for_day(athlete_id: int, target_date: date) -> Optional[Dict[str, Any]]:
     with get_session() as session:
-        def _serialize(record: WorkoutCompliance) -> Dict[str, Any]:
+        def _serialize(record: WorkoutCompliance, workout: Optional[Workout]) -> Dict[str, Any]:
             return {
                 "athlete_id": record.athlete_id,
                 "workout_id": record.workout_id,
                 "workout_date": record.workout_date.isoformat() if record.workout_date else None,
                 "sport": record.sport,
+                "workout_title": _extract_workout_title((workout.raw_json if workout else None)),
                 "planned": record.planned_summary,
                 "actual": record.actual_summary,
                 "metrics": record.metrics,
@@ -611,22 +683,30 @@ def get_compliance_for_day(athlete_id: int, target_date: date) -> Optional[Dict[
             }
 
         exact_stmt = (
-            select(WorkoutCompliance)
+            select(WorkoutCompliance, Workout)
+            .join(Workout, Workout.id == WorkoutCompliance.workout_id, isouter=True)
             .where(WorkoutCompliance.athlete_id == athlete_id)
             .where(WorkoutCompliance.workout_date == target_date)
             .order_by(WorkoutCompliance.updated_at.desc())
         )
-        exact_records = session.execute(exact_stmt).scalars().all()
+
+        rows = session.execute(exact_stmt).all()
+        exact_records = [row[0] for row in rows]
         
         # Return None if no workouts found for the target date (no fallback)
         if not exact_records:
             return None
 
+        by_workout_id: dict[int, Optional[Workout]] = {}
+        for record, workout in rows:
+            if record and record.workout_id is not None:
+                by_workout_id[int(record.workout_id)] = workout
+
         return {
             "requested_date": target_date.isoformat(),
             "is_exact_match": True,
             "workout_date": target_date.isoformat(),
-            "records": [_serialize(record) for record in exact_records],
+            "records": [_serialize(record, by_workout_id.get(int(record.workout_id))) for record in exact_records],
         }
 
 
@@ -637,12 +717,13 @@ def get_compliance_for_range(
 ) -> Dict[str, Any]:
     """Return workout compliance records across an inclusive date range."""
     with get_session() as session:
-        def _serialize(record: WorkoutCompliance) -> Dict[str, Any]:
+        def _serialize(record: WorkoutCompliance, workout: Optional[Workout]) -> Dict[str, Any]:
             return {
                 "athlete_id": record.athlete_id,
                 "workout_id": record.workout_id,
                 "workout_date": record.workout_date.isoformat() if record.workout_date else None,
                 "sport": record.sport,
+                "workout_title": _extract_workout_title((workout.raw_json if workout else None)),
                 "planned": record.planned_summary,
                 "actual": record.actual_summary,
                 "metrics": record.metrics,
@@ -652,16 +733,18 @@ def get_compliance_for_range(
             }
 
         stmt = (
-            select(WorkoutCompliance)
+            select(WorkoutCompliance, Workout)
+            .join(Workout, Workout.id == WorkoutCompliance.workout_id, isouter=True)
             .where(WorkoutCompliance.athlete_id == athlete_id)
             .where(WorkoutCompliance.workout_date >= start_date)
             .where(WorkoutCompliance.workout_date <= end_date)
             .order_by(WorkoutCompliance.workout_date.desc(), WorkoutCompliance.updated_at.desc())
         )
-        records = session.execute(stmt).scalars().all()
+
+        rows = session.execute(stmt).all()
 
     return {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
-        "records": [_serialize(r) for r in records],
+        "records": [_serialize(record, workout) for record, workout in rows],
     }

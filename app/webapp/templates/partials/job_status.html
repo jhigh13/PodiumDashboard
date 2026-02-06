@@ -1,0 +1,39 @@
+{% if not job %}
+  <div class="muted">Job not found.</div>
+{% else %}
+  {% if job.status in ['queued', 'running'] %}
+    <div class="muted"
+      hx-get="/partials/job_status?job_id={{ job.id }}"
+      hx-trigger="load delay:1s"
+      hx-swap="outerHTML">
+      Job {{ job.id }}: <strong>{{ job.status }}</strong> ({{ job.job_type }})
+    </div>
+  {% elif job.status == 'succeeded' %}
+    <div>Job {{ job.id }}: <strong>succeeded</strong></div>
+    {% if job.result %}
+      <div class="muted" style="margin-top:6px;">
+        {% if job.result.get('athletes_total') is not none %}
+          Roster sync: {{ job.result.get('athletes_succeeded') }} / {{ job.result.get('athletes_total') }} athletes succeeded
+          {% if job.result.get('athletes_failed') %}
+            • {{ job.result.get('athletes_failed') }} failed
+          {% endif %}
+        {% endif %}
+        {% if job.result.get('workouts_inserted') is not none %}
+          Workouts: {{ job.result.get('workouts_inserted') }} inserted ({{ job.result.get('workouts_fetched') }} fetched)
+          {% if job.result.get('workout_duplicates') is not none %}
+            • {{ job.result.get('workout_duplicates') }} duplicates
+          {% endif %}
+        {% endif %}
+        {% if job.result.get('metrics_saved') is not none %}
+          {% if job.result.get('workouts_inserted') is not none %} • {% endif %}
+          Metrics: {{ job.result.get('metrics_saved') }} saved ({{ job.result.get('metrics_fetched') }} fetched)
+        {% endif %}
+        {% if job.result.get('metrics_error') %}
+          <div class="muted" style="margin-top:6px;">⚠️ Metrics skipped: {{ job.result.get('metrics_error') }}{% if job.result.get('metrics_http_status') %} (HTTP {{ job.result.get('metrics_http_status') }}){% endif %}</div>
+        {% endif %}
+      </div>
+    {% endif %}
+  {% else %}
+    <div>Job {{ job.id }}: <strong>{{ job.status }}</strong> — {{ job.error }}</div>
+  {% endif %}
+{% endif %}

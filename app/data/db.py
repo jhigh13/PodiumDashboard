@@ -38,6 +38,17 @@ def ensure_schema():
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE athletes ADD COLUMN tp_metrics_available BOOLEAN"))
 
+    # Ensure newly introduced tables exist (when running against an existing DB).
+    # Base.metadata.create_all should normally handle this, but some deployments only
+    # apply partial DDL; keep this as a safety net.
+    try:
+        tables = set(insp.get_table_names())
+        if 'recovery_alert_runs' not in tables:
+            Base.metadata.tables['recovery_alert_runs'].create(bind=engine, checkfirst=True)
+    except Exception:
+        # Don't hard-fail app startup on schema patching; surface via runtime errors if any.
+        pass
+
 def init_db():
     """Create tables then apply simple schema patches if needed, with transient retry."""
     backoffs = [1, 3, 5]

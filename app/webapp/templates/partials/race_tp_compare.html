@@ -1,0 +1,62 @@
+{% if error %}
+  <div class="muted">{{ error }}</div>
+{% else %}
+  <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end; justify-content:space-between;">
+    <div>
+      <div class="muted">Segment</div>
+      <select id="tp_compare_sport" name="tp_compare_sport">
+        {% for opt in sport_options %}
+          <option value="{{ opt.value }}" {% if opt.value == selected_sport %}selected{% endif %}>{{ opt.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="muted">We look for workouts on the race date (±1 day).</div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="row" style="align-items:stretch;">
+    <div class="col card" style="margin-bottom:0;">
+      <div class="muted">Race A workout</div>
+      <select id="tp_workout_a" name="tp_workout_a" style="width:100%; max-width:520px;">
+        <option value="">Select…</option>
+        {% for w in workouts_a %}
+          <option value="{{ w.workout_id }}" {% if w.workout_id == selected_workout_a %}selected{% endif %}>{{ w.label }}</option>
+        {% endfor %}
+      </select>
+      {% if workouts_a|length == 0 %}
+        <div class="muted" style="margin-top:8px;">No workouts found for Race A day.</div>
+      {% endif %}
+    </div>
+
+    <div class="col card" style="margin-bottom:0;">
+      <div class="muted">Race B workout</div>
+      <select id="tp_workout_b" name="tp_workout_b" style="width:100%; max-width:520px;">
+        <option value="">Select…</option>
+        {% for w in workouts_b %}
+          <option value="{{ w.workout_id }}" {% if w.workout_id == selected_workout_b %}selected{% endif %}>{{ w.label }}</option>
+        {% endfor %}
+      </select>
+      {% if workouts_b|length == 0 %}
+        <div class="muted" style="margin-top:8px;">No workouts found for Race B day.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; justify-content:space-between;">
+    <button
+      class="btn"
+      hx-get="/partials/race_tp_traces"
+      hx-include="#controls, #compare_race_a, #compare_race_b, #tp_compare_sport, #tp_workout_a, #tp_workout_b"
+      hx-target="#race-tp-traces"
+      hx-swap="innerHTML"
+    >Load Race-Day Traces</button>
+
+    <div class="muted">If the workout is huge, the details endpoint may fail; FIT download/parse is the fallback.</div>
+  </div>
+
+  <div id="race-tp-traces" class="muted" style="margin-top:12px;">Select workouts then click “Load Race-Day Traces”.</div>
+{% endif %}

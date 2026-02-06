@@ -1,0 +1,30 @@
+{% if error %}
+  <div class="muted">{{ error }}</div>
+{% else %}
+  <div class="row" style="align-items:stretch;">
+    <div class="col card" style="margin-bottom:0;">
+      <h4 style="margin-top:0;">{{ title }}</h4>
+      {% if fig_json %}
+        <div id="chart-tp-compare" data-fig="{{ fig_json | e }}" style="height:420px;"></div>
+        <script>
+          (function () {
+            if (typeof Plotly === 'undefined') return;
+            const el = document.getElementById('chart-tp-compare');
+            if (!el) return;
+            const raw = el.dataset.fig;
+            if (!raw) return;
+            const fig = JSON.parse(raw);
+            const config = { displayModeBar: false, responsive: true };
+            Plotly.react(el, fig.data, fig.layout, config);
+          })();
+        </script>
+      {% else %}
+        <div class="muted">No time-series channels available for this selection.</div>
+      {% endif %}
+
+      {% if notes %}
+        <div class="muted" style="margin-top:10px;">{{ notes }}</div>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}

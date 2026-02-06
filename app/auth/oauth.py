@@ -29,8 +29,8 @@ def create_session(redirect_uri: str | None = None, token: dict | None = None, s
     )
 
 
-def get_authorization_url(scope: str | list[str] | None = None):
-    session = create_session(scope=scope)
+def get_authorization_url(scope: str | list[str] | None = None, redirect_uri: str | None = None):
+    session = create_session(redirect_uri=redirect_uri, scope=scope)
     uri, state = session.create_authorization_url(AUTHORIZE_URL)
     return uri, state
 
@@ -43,7 +43,7 @@ def _validate_token_dict(token: dict, context: str):
     return token
 
 
-def fetch_token(code: str, scope: str | list[str] | None = None):
+def fetch_token(code: str, scope: str | list[str] | None = None, redirect_uri: str | None = None):
     """Exchange authorization code for access token.
     
     TrainingPeaks requires:
@@ -58,7 +58,7 @@ def fetch_token(code: str, scope: str | list[str] | None = None):
     payload = {
         "grant_type": "authorization_code",
         "code": code,  # requests will handle URL encoding in form data
-        "redirect_uri": settings.tp_redirect_uri,
+        "redirect_uri": redirect_uri or settings.tp_redirect_uri,
         "client_id": settings.tp_client_id,
         "client_secret": settings.tp_client_secret,
     }

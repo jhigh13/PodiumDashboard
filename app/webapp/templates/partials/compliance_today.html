@@ -1,0 +1,98 @@
+<div>
+  <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+    <div>
+      <div style="font-size:18px; font-weight:900;">Workout Compliance • Today</div>
+      <div class="muted">{{ today }}</div>
+    </div>
+    <div class="muted">SBR only (Swim/Bike/Run)</div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="kpi-row">
+    <div class="kpi"><div class="circle" style="background:#f3f4f6; color:#111827;">{{ total }}</div><div class="label">Workouts</div></div>
+    <div class="kpi"><div class="circle" style="background:#166534; color:#9ff3c7;">{{ buckets.good }}</div><div class="label">Good</div></div>
+    <div class="kpi"><div class="circle" style="background:#ffedd5; color:#92400e;">{{ buckets.ok }}</div><div class="label">Ok</div></div>
+    <div class="kpi"><div class="circle" style="background:#fee2e2; color:#7f1d1d;">{{ buckets.bad }}</div><div class="label">Bad</div></div>
+    <div class="kpi"><div class="circle" style="background:#f1f5f9; color:#334155;">{{ buckets.missed }}</div><div class="label">Missed</div></div>
+  </div>
+
+  <div class="divider"></div>
+
+  {% if records | length == 0 %}
+    <div class="muted">No Swim/Bike/Run compliance records for today.</div>
+  {% else %}
+    {% for r in records %}
+      {% set sport = (r.sport or '—') %}
+      {% set cls = r._class %}
+      {% set score = r.overall_score %}
+      {% set metrics = (r.metrics or []) %}
+
+      <div class="card" style="margin: 12px 0 0 0;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <div style="font-weight:900;">{{ sport | title }}</div>
+            <div class="badge {{ cls.badge_class }}">{{ cls.badge }}</div>
+          </div>
+          <div class="muted">
+            {% if score is not none %}
+              Score: {{ '%.0f'|format(score) }}
+            {% else %}
+              Score: —
+            {% endif %}
+          </div>
+        </div>
+
+        {% if r.workout_title %}
+          <div class="muted" style="margin-top:6px; font-size:13px;">{{ r.workout_title }}</div>
+        {% endif %}
+
+        {% set show_metrics = [] %}
+        {% for m in metrics %}
+          {% if m.metric in ['distance','duration','pace','speed','power'] %}
+            {% set _ = show_metrics.append(m) %}
+          {% endif %}
+        {% endfor %}
+
+        {% if show_metrics | length == 0 %}
+          <div class="muted" style="margin-top:10px;">No compliance metric rows saved for this workout yet.</div>
+        {% else %}
+          <table style="margin-top:10px;">
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th>Planned</th>
+                <th>Actual</th>
+                <th>Rating</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for m in show_metrics %}
+                <tr>
+                  <td>{{ (m.metric or '') | title }}</td>
+                  <td>{{ m.planned }} {% if m.unit %}{{ m.unit }}{% endif %}</td>
+                  <td>{{ m.actual }} {% if m.unit %}{{ m.unit }}{% endif %}</td>
+                  <td>
+                    {% if m.rating == 'good' %}
+                      <span class="badge green">Good</span>
+                    {% elif m.rating == 'ok' %}
+                      <span class="badge yellow">Ok</span>
+                    {% elif m.rating == 'bad' %}
+                      <span class="badge red">Bad</span>
+                    {% else %}
+                      <span class="muted">—</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+
+        {% if r.notes %}
+          <div class="muted" style="margin-top:10px;">Notes: {{ r.notes }}</div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% endif %}
+</div>

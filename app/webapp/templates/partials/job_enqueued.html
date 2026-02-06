@@ -1,0 +1,6 @@
+<div
+  hx-get="/partials/job_status?job_id={{ job_id }}"
+  hx-trigger="load"
+  hx-swap="outerHTML">
+  <div class="muted">Enqueued job {{ job_id }}...</div>
+</div>
