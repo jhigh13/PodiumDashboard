@@ -1,0 +1,113 @@
+<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end; justify-content:space-between;">
+  <div>
+    <div class="muted">Year</div>
+    <select id="race_year" name="race_year">
+      {% for y in years %}
+        <option value="{{ y }}" {% if y == selected_year %}selected{% endif %}>{{ y }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="muted">Races: {{ race_count }}{% if finished_count is not none %} • Finished: {{ finished_count }}{% endif %}</div>
+</div>
+
+<div class="divider"></div>
+
+{% if not has_data %}
+  <div class="muted">{{ message }}</div>
+{% else %}
+  <div class="row">
+    <div class="col card" style="margin-bottom:0;">
+      <h4 style="margin-top:0;">Best Race Result ({{ selected_year }})</h4>
+      {% if best_race %}
+        <div style="font-weight:800; font-size:16px;">{{ best_race.event_name }}</div>
+        <div style="margin-top:10px; font-weight:900; font-size:22px;">
+          {{ best_race.finish_position }} place
+        </div>
+      {% else %}
+        <div class="muted">No FINISH results with a numeric placing in {{ selected_year }}.</div>
+      {% endif %}
+    </div>
+
+    <div class="col card" style="margin-bottom:0;">
+      <h4 style="margin-top:0;">Worst Race Result ({{ selected_year }})</h4>
+      {% if worst_finished %}
+        <div style="font-weight:800; font-size:16px;">{{ worst_finished.event_name }}</div>
+        <div style="margin-top:10px; font-weight:900; font-size:22px;">
+          {{ worst_finished.finish_position }} place
+        </div>
+      {% else %}
+        <div class="muted">No finished races with a numeric placing in {{ selected_year }}.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <h4 style="margin-top:0;">Race Results Trend</h4>
+    <div class="muted" style="margin:-6px 0 10px 0;">Tip: hover over a dot for race + field + result.</div>
+    {% if fig_json %}
+      <div id="chart-race" data-fig="{{ fig_json | e }}" style="height:440px;"></div>
+      <script>
+        (function () {
+          if (typeof Plotly === 'undefined') return;
+          const el = document.getElementById('chart-race');
+          if (!el) return;
+          const raw = el.dataset.fig;
+          if (!raw) return;
+          const fig = JSON.parse(raw);
+          const config = { displayModeBar: false, responsive: true };
+          Plotly.react(el, fig.data, fig.layout, config);
+        })();
+      </script>
+    {% else %}
+      <div class="muted">No chartable race placings for {{ selected_year }} (need numeric finish positions).</div>
+    {% endif %}
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <h4 style="margin-top:0;">Race Comparison</h4>
+    <div class="muted" style="margin:-6px 0 10px 0;">Compare two races by split ranks, checkpoint placing, and gap to leader.</div>
+
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end; justify-content:space-between;">
+      <div>
+        <div class="muted">Race A</div>
+        <select id="compare_race_a" name="compare_race_a">
+          <option value="">Select…</option>
+          {% for r in races %}
+            {% set key = (r.event_id|string) ~ ':' ~ (r.prog_id|string) %}
+            <option value="{{ key }}" {% if default_compare_a and key == default_compare_a %}selected{% endif %}>
+              {{ r.event_date }} — {{ r.event_name }}{% if r.prog_name %} ({{ r.prog_name }}){% endif %}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div>
+        <div class="muted">Race B</div>
+        <select id="compare_race_b" name="compare_race_b">
+          <option value="">Select…</option>
+          {% for r in races %}
+            {% set key = (r.event_id|string) ~ ':' ~ (r.prog_id|string) %}
+            <option value="{{ key }}" {% if default_compare_b and key == default_compare_b %}selected{% endif %}>
+              {{ r.event_date }} — {{ r.event_name }}{% if r.prog_name %} ({{ r.prog_name }}){% endif %}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="muted">Tip: choose two races in the same year.</div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div
+      id="race-comparison"
+      class="muted"
+      hx-get="/partials/race_comparison"
+      hx-trigger="load, change from:#compare_race_a, change from:#compare_race_b, change from:#target_athlete_id, change from:#race_year, click from:#refresh-panels, podiumRefresh from:body"
+      hx-include="#controls, #race_year, #compare_race_a, #compare_race_b"
+      hx-target="this"
+      hx-swap="innerHTML"
+    >Select two races above to compare.</div>
+  </div>
+{% endif %}

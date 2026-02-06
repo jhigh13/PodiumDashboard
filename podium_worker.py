@@ -44,6 +44,42 @@ def _run_job(job) -> dict:
             raise RuntimeError("sync_recent job missing target_athlete_id")
         return ingest_recent(days=days, athlete_id=int(target))
 
+    if job_type == "sync_roster_recent":
+        from app.data.db import get_session
+        from app.models.tables import Athlete, CoachRosterMember
+        from app.services.ingest import ingest_recent
+        from sqlalchemy import select
+
+        days = int(payload.get("days", 7) or 7)
+        coach_id = getattr(job, "requested_by_athlete_id", None)
+        if not coach_id:
+            raise RuntimeError("sync_roster_recent job missing requested_by_athlete_id")
+
+        with get_session() as session:
+            stmt = (
+                select(Athlete.id)
+                .join(CoachRosterMember, CoachRosterMember.athlete_id == Athlete.id)
+                .where(CoachRosterMember.coach_athlete_id == int(coach_id))
+            )
+            athlete_ids = [int(r[0]) for r in session.execute(stmt).all()]
+
+        failures = []
+        succeeded = 0
+        for aid in athlete_ids:
+            try:
+                ingest_recent(days=days, athlete_id=int(aid))
+                succeeded += 1
+            except Exception as exc:  # noqa: BLE001
+                failures.append({"athlete_id": int(aid), "error": str(exc)})
+
+        return {
+            "days": days,
+            "athletes_total": len(athlete_ids),
+            "athletes_succeeded": succeeded,
+            "athletes_failed": len(failures),
+            "failures": failures[:25],
+        }
+
     raise RuntimeError(f"Unknown job_type: {job_type}")
 
 

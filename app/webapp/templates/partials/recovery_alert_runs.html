@@ -1,0 +1,54 @@
+{% if runs | length == 0 %}
+  <div class="muted">No recovery alert history found for this range.</div>
+{% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Status</th>
+        <th>Reason</th>
+        <th>Details</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in runs %}
+        <tr>
+          <td>{{ r.alert_date }}</td>
+          <td>
+            {% if r.triggered %}
+              <span class="badge red">Triggered</span>
+            {% else %}
+              <span class="badge green">OK</span>
+            {% endif %}
+          </td>
+          <td class="muted">{{ r.reason }}</td>
+          <td>
+            {% set m = r.metrics or {} %}
+            {% if m | length == 0 %}
+              <span class="muted">—</span>
+            {% else %}
+              {% for key in ['sleep_hours', 'hrv', 'rhr'] %}
+                {% set s = m.get(key) %}
+                {% if s %}
+                  {% set dp = s.get('delta_pct') %}
+                  {% if dp is not none %}
+                    {% set pct = (dp * 100.0) %}
+                    {% if s.get('breached') %}
+                      <span class="badge red">{{ key }} {{ '%.1f'|format(pct) }}%</span>
+                    {% else %}
+                      <span class="badge gray">{{ key }} {{ '%.1f'|format(pct) }}%</span>
+                    {% endif %}
+                  {% else %}
+                    <span class="badge gray">{{ key }} —</span>
+                  {% endif %}
+                {% else %}
+                  <span class="badge gray">{{ key }} —</span>
+                {% endif %}
+              {% endfor %}
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}

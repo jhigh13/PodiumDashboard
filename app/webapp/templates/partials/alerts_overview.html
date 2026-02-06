@@ -1,0 +1,110 @@
+{% if summary %}
+  <div class="row" style="align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+    <span class="badge gray">Range: {{ summary.days_total }}d</span>
+    <span class="badge red">Recovery triggered: {{ summary.recovery_triggered_days }}</span>
+    <span class="badge blue">Metric anomalies: {{ summary.metric_alerts }}</span>
+    <span class="muted" style="font-size:13px;">Red markers are overlaid on the HRV/RHR trend charts above.</span>
+  </div>
+{% endif %}
+
+<div class="row" style="align-items:flex-start; gap:14px; flex-wrap:wrap; margin-top:12px;">
+  <div class="col" style="flex: 1 1 520px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+      <h4 style="margin:0;">Fatigue Flags (Recovery)</h4>
+      <div class="muted" style="font-size:13px;">Stored daily evaluation</div>
+    </div>
+
+    {% if runs | length == 0 %}
+      <div class="muted" style="margin-top:8px;">No recovery alert history for this selection.</div>
+    {% else %}
+      <table style="margin-top:8px;">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Status</th>
+            <th>Reason</th>
+            <th>Details</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in runs %}
+            <tr>
+              <td>{{ r.alert_date }}</td>
+              <td>
+                {% if r.triggered %}
+                  <span class="badge red">Triggered</span>
+                {% else %}
+                  <span class="badge green">OK</span>
+                {% endif %}
+              </td>
+              <td class="muted">{{ r.reason }}</td>
+              <td>
+                {% set m = r.metrics or {} %}
+                {% if m | length == 0 %}
+                  <span class="muted">—</span>
+                {% else %}
+                  {% for key in ['sleep_hours', 'hrv', 'rhr'] %}
+                    {% set s = m.get(key) %}
+                    {% if s %}
+                      {% set dp = s.get('delta_pct') %}
+                      {% if dp is not none %}
+                        {% set pct = (dp * 100.0) %}
+                        {% if s.get('breached') %}
+                          <span class="badge red">{{ key }} {{ '%.1f'|format(pct) }}%</span>
+                        {% else %}
+                          <span class="badge gray">{{ key }} {{ '%.1f'|format(pct) }}%</span>
+                        {% endif %}
+                      {% else %}
+                        <span class="badge gray">{{ key }} —</span>
+                      {% endif %}
+                    {% else %}
+                      <span class="badge gray">{{ key }} —</span>
+                    {% endif %}
+                  {% endfor %}
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+
+  <div class="col" style="flex: 1 1 520px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+      <h4 style="margin:0;">Metric Anomalies</h4>
+      <div class="muted" style="font-size:13px;">Z-score style checks</div>
+    </div>
+
+    {% if alerts | length == 0 %}
+      <div class="muted" style="margin-top:8px;">No metric alerts found for this selection.</div>
+    {% else %}
+      <table style="margin-top:8px;">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Metric</th>
+            <th>Type</th>
+            <th>Severity</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in alerts %}
+            <tr>
+              <td>{{ a.alert_date }}</td>
+              <td>{{ a.metric_name }}</td>
+              <td>{{ a.alert_type }}</td>
+              <td>
+                {% if a.severity == 'green' %}<span class="badge green">green</span>{% endif %}
+                {% if a.severity == 'yellow' %}<span class="badge yellow">yellow</span>{% endif %}
+                {% if a.severity == 'red' %}<span class="badge red">red</span>{% endif %}
+              </td>
+              <td>{{ a.message }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+</div>

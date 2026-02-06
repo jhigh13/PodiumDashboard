@@ -1,0 +1,23 @@
+<div class="card">
+  <h4 style="margin-top:0;">Daily Workout Compliance</h4>
+  <form id="compliance-controls" style="display:flex; gap:12px; flex-wrap:wrap; align-items:end; margin: 8px 0 12px 0;">
+    <div>
+      <div class="muted">Day</div>
+      <input
+        id="compliance_date"
+        name="compliance_date"
+        type="date"
+        value="{{ (request.query_params.get('compliance_date') or default_compliance_date or '') }}"
+      />
+    </div>
+  </form>
+  <div
+    id="compliance"
+    class="muted"
+    hx-get="/partials/compliance_today"
+    hx-trigger="load, change from:#target_athlete_id, change from:#compliance_date, click from:#refresh-panels, podiumRefresh from:body"
+    hx-include="#controls, #compliance-controls"
+    hx-target="this"
+    hx-swap="innerHTML"
+  >Choose athlete to load compliance.</div>
+</div>

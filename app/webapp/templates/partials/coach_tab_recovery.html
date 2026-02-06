@@ -1,0 +1,98 @@
+<div
+  id="recovery-summary"
+  class="muted"
+  hx-get="/partials/recovery_summary"
+  hx-trigger="load, change from:#target_athlete_id, click from:#refresh-panels, podiumRefresh from:body"
+  hx-include="#controls"
+  hx-target="this"
+  hx-swap="innerHTML"
+>Choose athlete, then refresh.</div>
+
+<div class="card">
+  <h4 style="margin-top:0;">Recovery Metrics (Range)</h4>
+
+  <form id="recovery-controls" style="display:flex; gap:12px; flex-wrap:wrap; align-items:end; margin: 8px 0 12px 0;">
+    <div>
+      <div class="muted">Start</div>
+      <input
+        id="start"
+        name="start"
+        type="date"
+        value="{{ (request.query_params.get('start') or default_start or '') }}"
+      />
+    </div>
+    <div>
+      <div class="muted">End</div>
+      <input
+        id="end"
+        name="end"
+        type="date"
+        value="{{ (request.query_params.get('end') or default_end or '') }}"
+      />
+    </div>
+  </form>
+
+  <div style="display:flex; gap:12px; align-items:end; flex-wrap:wrap; margin: 10px 0 14px 0;">
+    <div style="flex: 1 1 360px;">
+      <div class="muted" style="font-size:13px;">Backfill recomputes baselines + alerts for the selected athlete and date range using stored data (no TrainingPeaks calls).</div>
+      <div id="backfill-status" class="muted" style="margin-top:6px;">No backfill yet.</div>
+    </div>
+    <form
+      hx-post="/partials/backfill_alerts"
+      hx-target="#backfill-status"
+      hx-swap="innerHTML"
+      hx-include="#controls, #recovery-controls"
+      hx-on::before-request="document.getElementById('backfill-status').innerHTML = '<span class=&quot;badge yellow&quot;>Running…</span> <span class=&quot;muted&quot;>Computing baselines + alerts for this range…</span>';"
+      hx-on::response-error="document.getElementById('backfill-status').innerHTML = '<span class=&quot;badge red&quot;>Backfill failed</span> <span class=&quot;muted&quot;>Request error (check server logs).</span>';"
+      style="display:flex; gap:10px; align-items:end;"
+    >
+      <button class="btn secondary" type="submit">Backfill Alerts</button>
+    </form>
+  </div>
+
+  <div
+    id="recovery-trends"
+    class="muted"
+    hx-get="/partials/recovery_trends"
+    hx-trigger="load, change from:#target_athlete_id, change from:#start, change from:#end, click from:#refresh-panels, podiumRefresh from:body"
+    hx-include="#controls, #recovery-controls"
+    hx-target="this"
+    hx-swap="innerHTML"
+  >Choose athlete + range, then refresh.</div>
+</div>
+
+<div class="card">
+  <h4 style="margin-top:0;">Alerts Overview</h4>
+  <div class="muted" style="margin-bottom:10px;">Unifies daily fatigue flags and metric anomalies with a quick timeline.</div>
+
+  <div id="alerts-filters" style="display:flex; gap:12px; align-items:end; flex-wrap:wrap; margin: 8px 0 12px 0;">
+    <label style="display:flex; flex-direction:column; gap:4px;">
+      <span class="muted" style="font-size:12px;">Metric</span>
+      <select id="metric_name" name="metric_name">
+        <option value="">All</option>
+        <option value="hrv">hrv</option>
+        <option value="rhr">rhr</option>
+        <option value="sleep_hours">sleep_hours</option>
+      </select>
+    </label>
+
+    <label style="display:flex; flex-direction:column; gap:4px;">
+      <span class="muted" style="font-size:12px;">Severity</span>
+      <select id="metric_severity" name="metric_severity">
+        <option value="">All</option>
+        <option value="yellow">yellow</option>
+        <option value="red">red</option>
+      </select>
+    </label>
+  </div>
+
+  <div
+    id="alerts-overview"
+    class="muted"
+    hx-get="/partials/alerts_overview?recovery_triggered_only=1"
+    hx-trigger="load, change from:#target_athlete_id, change from:#start, change from:#end, change from:#metric_name, change from:#metric_severity, click from:#refresh-panels, podiumRefresh from:body"
+    hx-include="#controls, #recovery-controls, #alerts-filters"
+    hx-target="this"
+    hx-swap="innerHTML"
+  >Choose athlete + range, then refresh.</div>
+</div>

@@ -1,0 +1,113 @@
+{% if not ready %}
+  <div class="muted">Select Race A and Race B to compare.</div>
+{% elif error %}
+  <div class="muted">{{ error }}</div>
+{% else %}
+  <div class="row" style="align-items:stretch;">
+    <div class="col card" style="margin-bottom:0;">
+      <div class="muted">Race A</div>
+      <div style="font-weight:800; font-size:14px;">{{ race_a.event_name }}</div>
+      <div class="muted" style="margin-top:6px;">{{ race_a.event_date }}{% if race_a.prog_name %} • {{ race_a.prog_name }}{% endif %}</div>
+    </div>
+    <div class="col card" style="margin-bottom:0;">
+      <div class="muted">Race B</div>
+      <div style="font-weight:800; font-size:14px;">{{ race_b.event_name }}</div>
+      <div class="muted" style="margin-top:6px;">{{ race_b.event_date }}{% if race_b.prog_name %} • {{ race_b.prog_name }}{% endif %}</div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div style="overflow:auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Segment</th>
+          <th>Race A Rank</th>
+          <th>Race A Split</th>
+          <th>Race B Rank</th>
+          <th>Race B Split</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rank_rows %}
+          <tr>
+            <td style="font-weight:700;">{{ row.label }}</td>
+            <td class="{{ row.a_class }}" style="font-weight:800;">{{ row.a_val }}</td>
+            <td>{{ row.a_time }}</td>
+            <td class="{{ row.b_class }}" style="font-weight:800;">{{ row.b_val }}</td>
+            <td>{{ row.b_time }}</td>
+          </tr>
+        {% endfor %}
+
+        <tr>
+          <td style="font-weight:800;">Overall</td>
+          <td class="{{ overall_a_class }}" style="font-weight:800;">{% if race_a.finish_position %}{{ race_a.finish_position }}{% else %}{{ race_a.finish_status or '—' }}{% endif %}</td>
+          <td style="font-weight:800;">{{ race_a.total_time or '—' }}</td>
+          <td class="{{ overall_b_class }}" style="font-weight:800;">{% if race_b.finish_position %}{{ race_b.finish_position }}{% else %}{{ race_b.finish_status or '—' }}{% endif %}</td>
+          <td style="font-weight:800;">{{ race_b.total_time or '—' }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="row" style="align-items:stretch;">
+    <div class="col card" style="margin-bottom:0;">
+      <h4 style="margin-top:0;">Placing at Checkpoints</h4>
+      <div class="muted" style="margin:-6px 0 10px 0;">Lower is better (leader at 1st).</div>
+      {% if fig_place_json %}
+        <div id="chart-compare-placing" data-fig="{{ fig_place_json | e }}" style="height:360px;"></div>
+      {% else %}
+        <div class="muted">No checkpoint placing data found for one or both races.</div>
+      {% endif %}
+    </div>
+
+    <div class="col card" style="margin-bottom:0;">
+      <h4 style="margin-top:0;">Gap to Leader at Checkpoints</h4>
+      <div class="muted" style="margin:-6px 0 10px 0;">Seconds behind the leader (lower is better).</div>
+      {% if fig_gap_json %}
+        <div id="chart-compare-gaps" data-fig="{{ fig_gap_json | e }}" style="height:360px;"></div>
+      {% else %}
+        <div class="muted">No gap-to-leader data found for one or both races.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      if (typeof Plotly === 'undefined') return;
+
+      function render(id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const raw = el.dataset.fig;
+        if (!raw) return;
+        const fig = JSON.parse(raw);
+        const config = { displayModeBar: false, responsive: true };
+        Plotly.react(el, fig.data, fig.layout, config);
+      }
+
+      render('chart-compare-placing');
+      render('chart-compare-gaps');
+    })();
+  </script>
+
+  <div class="divider"></div>
+
+  <div class="card" style="margin-top:16px;">
+    <h4 style="margin-top:0;">TrainingPeaks Race-Day Comparison</h4>
+    <div class="muted" style="margin:-6px 0 10px 0;">Select the swim/bike/run workouts uploaded on each race day, then load time-series traces.</div>
+
+    <div
+      id="race-tp-compare"
+      class="muted"
+      hx-get="/partials/race_tp_compare"
+      hx-trigger="load, change from:#compare_race_a, change from:#compare_race_b, change from:#tp_compare_sport"
+      hx-include="#controls, #compare_race_a, #compare_race_b, #tp_compare_sport"
+      hx-target="this"
+      hx-swap="innerHTML"
+    >Loading TrainingPeaks workouts…</div>
+  </div>
+{% endif %}

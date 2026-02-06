@@ -1,0 +1,15 @@
+{% if error %}
+  <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+    <span class="badge red">Backfill failed</span>
+    <span class="muted">{{ error }}</span>
+  </div>
+{% else %}
+  <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+    <span class="badge green">Backfill complete</span>
+    <span class="muted">Days in range: {{ summary.days_total }}</span>
+    <span class="muted">Days with metrics: {{ summary.days_with_metrics }}</span>
+    <span class="muted">Metric alerts created: {{ summary.metric_alerts_created }}</span>
+    <span class="muted">Recovery triggered: {{ summary.recovery_triggered }}</span>
+  </div>
+  <div class="muted" style="margin-top:6px;">Panels will refresh automatically.</div>
+{% endif %}

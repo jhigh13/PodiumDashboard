@@ -56,64 +56,66 @@ def calculate_baselines(athlete_id: int, end_date: date | None = None):
     }
     
     results = {}
-    
-    for window_name, days_back in windows.items():
-        start_date = end_date - timedelta(days=days_back)
-        
-        with get_session() as session:
+
+    with get_session() as session:
+        for window_name, days_back in windows.items():
+            start_date = end_date - timedelta(days=days_back)
+
             # Fetch metrics in date range
             stmt = select(DailyMetric).where(
                 DailyMetric.athlete_id == athlete_id,
                 DailyMetric.date >= start_date,
-                DailyMetric.date <= end_date
+                DailyMetric.date <= end_date,
             )
             metrics = session.execute(stmt).scalars().all()
-            
+
             if not metrics:
                 continue
-            
-            # Calculate baseline for each metric type
+
             for metric_name, config in METRIC_CONFIGS.items():
                 field_name = config["db_field"]
                 values = [getattr(m, field_name) for m in metrics if getattr(m, field_name) is not None]
-                
-                if len(values) < 3:  # Need at least 3 data points
+
+                if len(values) < 3:
                     continue
-                
+
                 mean = statistics.mean(values)
                 std_dev = statistics.stdev(values) if len(values) > 1 else 0
                 sorted_values = sorted(values)
                 p25 = sorted_values[len(sorted_values) // 4]
                 p75 = sorted_values[(3 * len(sorted_values)) // 4]
-                
-                # Delete old baseline for this window
-                session.execute(delete(BaselineMetric).where(
-                    BaselineMetric.athlete_id == athlete_id,
-                    BaselineMetric.metric_name == metric_name,
-                    BaselineMetric.window_type == window_name
-                ))
-                
-                # Store new baseline
-                baseline = BaselineMetric(
-                    athlete_id=athlete_id,
-                    metric_name=metric_name,
-                    window_type=window_name,
-                    window_end_date=end_date,
-                    mean=mean,
-                    std_dev=std_dev,
-                    percentile_25=p25,
-                    percentile_75=p75,
-                    sample_count=len(values),
+
+                session.execute(
+                    delete(BaselineMetric).where(
+                        BaselineMetric.athlete_id == athlete_id,
+                        BaselineMetric.metric_name == metric_name,
+                        BaselineMetric.window_type == window_name,
+                        BaselineMetric.window_end_date == end_date,
+                    )
                 )
-                session.add(baseline)
-                session.commit()
-                
+
+                session.add(
+                    BaselineMetric(
+                        athlete_id=athlete_id,
+                        metric_name=metric_name,
+                        window_type=window_name,
+                        window_end_date=end_date,
+                        mean=mean,
+                        std_dev=std_dev,
+                        percentile_25=p25,
+                        percentile_75=p75,
+                        sample_count=len(values),
+                    )
+                )
+
                 results.setdefault(metric_name, {})[window_name] = {
                     "mean": mean,
                     "std_dev": std_dev,
                     "sample_count": len(values),
                 }
-    
+
+            session.commit()
+
     return results
 
 
@@ -125,6 +127,25 @@ def get_baseline(athlete_id: int, metric_name: str, window_type: str) -> Baselin
             BaselineMetric.metric_name == metric_name,
             BaselineMetric.window_type == window_type
         ).order_by(BaselineMetric.created_at.desc())
+        return session.execute(stmt).scalars().first()
+
+
+def get_baseline_asof(
+    athlete_id: int,
+    metric_name: str,
+    window_type: str,
+    as_of_date: date,
+) -> BaselineMetric | None:
+    """Retrieve the most recent baseline snapshot with window_end_date <= as_of_date."""
+    with get_session() as session:
+        stmt = (
+            select(BaselineMetric)
+            .where(BaselineMetric.athlete_id == athlete_id)
+            .where(BaselineMetric.metric_name == metric_name)
+            .where(BaselineMetric.window_type == window_type)
+            .where(BaselineMetric.window_end_date <= as_of_date)
+            .order_by(BaselineMetric.window_end_date.desc(), BaselineMetric.created_at.desc())
+        )
         return session.execute(stmt).scalars().first()
 
 
@@ -171,11 +192,20 @@ def check_alert_conditions(athlete_id: int, check_date: date | None = None) -> l
         List of MetricAlert objects created
     """
     if check_date is None:
-        check_date = date.today()
+        check_date = get_effective_today()
     
     alerts = []
     
     with get_session() as session:
+        existing_keys = set(
+            session.execute(
+                select(MetricAlert.metric_name, MetricAlert.alert_type).where(
+                    MetricAlert.athlete_id == athlete_id,
+                    MetricAlert.alert_date == check_date,
+                )
+            ).all()
+        )
+
         # Get today's metrics
         stmt = select(DailyMetric).where(
             DailyMetric.athlete_id == athlete_id,
@@ -193,8 +223,8 @@ def check_alert_conditions(athlete_id: int, check_date: date | None = None) -> l
                 continue
             
             # Check weekly average vs monthly baseline
-            weekly_baseline = get_baseline(athlete_id, metric_name, "weekly")
-            monthly_baseline = get_baseline(athlete_id, metric_name, "monthly")
+            weekly_baseline = get_baseline_asof(athlete_id, metric_name, "weekly", check_date)
+            monthly_baseline = get_baseline_asof(athlete_id, metric_name, "monthly", check_date)
             
             if weekly_baseline and monthly_baseline:
                 # Weekly average deviation from monthly
@@ -206,6 +236,8 @@ def check_alert_conditions(athlete_id: int, check_date: date | None = None) -> l
                     )
                     
                     if abs(weekly_deviation) > THRESHOLD_WEEKLY:
+                        if (metric_name, "weekly") in existing_keys:
+                            continue
                         severity = get_severity(weekly_deviation)
                         message = generate_alert_message(
                             config["display_name"],
@@ -239,6 +271,8 @@ def check_alert_conditions(athlete_id: int, check_date: date | None = None) -> l
                 )
                 
                 if abs(acute_deviation) > THRESHOLD_ACUTE:
+                    if (metric_name, "acute") in existing_keys:
+                        continue
                     severity = get_severity(acute_deviation)
                     message = generate_alert_message(
                         config["display_name"],
@@ -289,7 +323,7 @@ def generate_alert_message(metric_name: str, current: float, baseline: float, de
 
 def get_recent_alerts(athlete_id: int, days: int = 7) -> list[MetricAlert]:
     """Get recent alerts for an athlete."""
-    cutoff_date = date.today() - timedelta(days=days)
+    cutoff_date = get_effective_today() - timedelta(days=days)
     
     with get_session() as session:
         stmt = select(MetricAlert).where(

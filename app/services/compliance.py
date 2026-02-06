@@ -22,6 +22,23 @@ METERS_PER_MILE = 1609.34
 METERS_PER_YARD = 0.9144
 
 
+def _extract_workout_title(raw_workout: Any) -> Optional[str]:
+    if not isinstance(raw_workout, dict):
+        return None
+    title = (
+        raw_workout.get("Title")
+        or raw_workout.get("title")
+        or raw_workout.get("WorkoutName")
+        or raw_workout.get("workoutName")
+        or raw_workout.get("Name")
+        or raw_workout.get("name")
+    )
+    if title is None:
+        return None
+    s = str(title).strip()
+    return s or None
+
+
 def _as_float(value: Any) -> Optional[float]:
     if value is None:
         return None
@@ -650,12 +667,13 @@ def upsert_workout_compliance(
 
 def get_compliance_for_day(athlete_id: int, target_date: date) -> Optional[Dict[str, Any]]:
     with get_session() as session:
-        def _serialize(record: WorkoutCompliance) -> Dict[str, Any]:
+        def _serialize(record: WorkoutCompliance, workout: Optional[Workout]) -> Dict[str, Any]:
             return {
                 "athlete_id": record.athlete_id,
                 "workout_id": record.workout_id,
                 "workout_date": record.workout_date.isoformat() if record.workout_date else None,
                 "sport": record.sport,
+                "workout_title": _extract_workout_title((workout.raw_json if workout else None)),
                 "planned": record.planned_summary,
                 "actual": record.actual_summary,
                 "metrics": record.metrics,
@@ -665,22 +683,30 @@ def get_compliance_for_day(athlete_id: int, target_date: date) -> Optional[Dict[
             }
 
         exact_stmt = (
-            select(WorkoutCompliance)
+            select(WorkoutCompliance, Workout)
+            .join(Workout, Workout.id == WorkoutCompliance.workout_id, isouter=True)
             .where(WorkoutCompliance.athlete_id == athlete_id)
             .where(WorkoutCompliance.workout_date == target_date)
             .order_by(WorkoutCompliance.updated_at.desc())
         )
-        exact_records = session.execute(exact_stmt).scalars().all()
+
+        rows = session.execute(exact_stmt).all()
+        exact_records = [row[0] for row in rows]
         
         # Return None if no workouts found for the target date (no fallback)
         if not exact_records:
             return None
 
+        by_workout_id: dict[int, Optional[Workout]] = {}
+        for record, workout in rows:
+            if record and record.workout_id is not None:
+                by_workout_id[int(record.workout_id)] = workout
+
         return {
             "requested_date": target_date.isoformat(),
             "is_exact_match": True,
             "workout_date": target_date.isoformat(),
-            "records": [_serialize(record) for record in exact_records],
+            "records": [_serialize(record, by_workout_id.get(int(record.workout_id))) for record in exact_records],
         }
 
 
@@ -691,12 +717,13 @@ def get_compliance_for_range(
 ) -> Dict[str, Any]:
     """Return workout compliance records across an inclusive date range."""
     with get_session() as session:
-        def _serialize(record: WorkoutCompliance) -> Dict[str, Any]:
+        def _serialize(record: WorkoutCompliance, workout: Optional[Workout]) -> Dict[str, Any]:
             return {
                 "athlete_id": record.athlete_id,
                 "workout_id": record.workout_id,
                 "workout_date": record.workout_date.isoformat() if record.workout_date else None,
                 "sport": record.sport,
+                "workout_title": _extract_workout_title((workout.raw_json if workout else None)),
                 "planned": record.planned_summary,
                 "actual": record.actual_summary,
                 "metrics": record.metrics,
@@ -706,16 +733,18 @@ def get_compliance_for_range(
             }
 
         stmt = (
-            select(WorkoutCompliance)
+            select(WorkoutCompliance, Workout)
+            .join(Workout, Workout.id == WorkoutCompliance.workout_id, isouter=True)
             .where(WorkoutCompliance.athlete_id == athlete_id)
             .where(WorkoutCompliance.workout_date >= start_date)
             .where(WorkoutCompliance.workout_date <= end_date)
             .order_by(WorkoutCompliance.workout_date.desc(), WorkoutCompliance.updated_at.desc())
         )
-        records = session.execute(stmt).scalars().all()
+
+        rows = session.execute(stmt).all()
 
     return {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
-        "records": [_serialize(r) for r in records],
+        "records": [_serialize(record, workout) for record, workout in rows],
     }

@@ -1,0 +1,13 @@
+<div class="card">
+  <h4 style="margin-top:0;">Race Performance</h4>
+
+  <div
+    id="race-performance"
+    class="muted"
+    hx-get="/partials/race_performance"
+    hx-trigger="load, change from:#target_athlete_id, change from:#race_year, click from:#refresh-panels, podiumRefresh from:body"
+    hx-include="#controls, #race_year"
+    hx-target="this"
+    hx-swap="innerHTML"
+  >Choose athlete, then refresh.</div>
+</div>

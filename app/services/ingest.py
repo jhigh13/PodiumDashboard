@@ -1,12 +1,16 @@
 from datetime import date, timedelta, datetime
+import time
+
+import requests
 from sqlalchemy import select, delete
 from app.data.db import get_session
 from app.models.tables import Workout, DailyMetric
 from app.services.tp_api import get_api
 from app.services.tokens import get_token as _get_token, find_coach_token as _find_coach_token
 from app.services.athletes import get_or_create_demo_athlete, get_athlete_by_id
-from app.services.baseline import calculate_baselines
+from app.services.baseline import calculate_baselines, check_alert_conditions
 from app.services.recovery_alerts import evaluate_recovery_alert
+from app.services.recovery_alert_runs import upsert_recovery_alert_run
 from app.utils.dates import get_effective_today
 from app.services.compliance import upsert_workout_compliance, get_compliance_for_day
 
@@ -104,7 +108,7 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
                 # IF: only use IF (actual) if completed
                 if_val = w.get('IF') if completed else None
                 
-                date_field = w.get('WorkoutDay')
+                date_field = w.get('workoutDay') or w.get('WorkoutDay') or w.get('Date') or w.get('date')
                 record = Workout(
                     athlete_id=athlete.id,
                     tp_workout_id=workout_id,
@@ -141,8 +145,9 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
     if tp_athlete_id is None:
         inferred_id = None
         for w in workouts:
-            if w.get('AthleteId'):
-                inferred_id = w.get('AthleteId')
+            inferred_candidate = w.get('AthleteId') or w.get('athleteId') or w.get('athlete_id')
+            if inferred_candidate:
+                inferred_id = inferred_candidate
                 break
         if inferred_id:
             with get_session() as session:
@@ -158,31 +163,75 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
     # Metrics range (same period) - premium-only for many athletes.
     # If we already learned metrics are unavailable, skip calling the endpoint.
     metrics = None
+    metrics_error: str | None = None
+    metrics_http_status: int | None = None
+    metrics_attempts: int = 0
     if getattr(athlete, "tp_metrics_available", None) is not False:
-        try:
-            metrics = api.fetch_daily_metrics_range(start, end, tp_athlete_id=tp_athlete_id)
-            # If we reached the endpoint without a premium restriction, mark metrics as available.
-            from sqlalchemy import text
-            with get_session() as session:
-                session.execute(text("UPDATE athletes SET tp_metrics_available = TRUE WHERE id = :id"), {"id": athlete.id})
-                session.commit()
-        except RuntimeError as e:
-            # Handle non-premium athlete errors gracefully
-            if "premium" in str(e).lower():
-                metrics = None
-                print(f"⚠️  Athlete {athlete.name} is not a premium athlete - metrics unavailable")
+        max_attempts = 3
+        while metrics_attempts < max_attempts:
+            metrics_attempts += 1
+            try:
+                metrics = api.fetch_daily_metrics_range(start, end, tp_athlete_id=tp_athlete_id)
+                # If we reached the endpoint without a premium restriction, mark metrics as available.
                 from sqlalchemy import text
+
                 with get_session() as session:
-                    session.execute(text("UPDATE athletes SET tp_metrics_available = FALSE WHERE id = :id"), {"id": athlete.id})
+                    session.execute(
+                        text("UPDATE athletes SET tp_metrics_available = TRUE WHERE id = :id"),
+                        {"id": athlete.id},
+                    )
                     session.commit()
-            elif "403 forbidden" in str(e).lower():
-                metrics = None
-                print(f"⚠️  Metrics unavailable for athlete {athlete.name} (403). Skipping metrics.")
-                from sqlalchemy import text
-                with get_session() as session:
-                    session.execute(text("UPDATE athletes SET tp_metrics_available = FALSE WHERE id = :id"), {"id": athlete.id})
-                    session.commit()
-            else:
+                break
+            except requests.HTTPError as e:
+                # TrainingPeaks sandbox occasionally returns transient 5xx for metrics.
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                metrics_http_status = int(status) if status is not None else None
+                if metrics_http_status and metrics_http_status >= 500:
+                    if metrics_attempts < max_attempts:
+                        backoff = float(metrics_attempts)
+                        print(
+                            f"⚠️  Metrics API returned {metrics_http_status} for athlete {athlete.name}. "
+                            f"Retrying in {backoff:.0f}s ({metrics_attempts}/{max_attempts})..."
+                        )
+                        time.sleep(backoff)
+                        continue
+                    metrics_error = f"metrics_api_http_{metrics_http_status}"
+                    metrics = None
+                    print(
+                        f"⚠️  Metrics API still failing ({metrics_http_status}) for athlete {athlete.name}. "
+                        "Skipping metrics for this sync."
+                    )
+                    break
+                raise
+            except RuntimeError as e:
+                # Handle non-premium athlete errors and permission issues gracefully
+                msg = str(e)
+                if "premium" in msg.lower():
+                    metrics = None
+                    metrics_error = "non_premium_metrics"
+                    print(f"⚠️  Athlete {athlete.name} is not a premium athlete - metrics unavailable")
+                    from sqlalchemy import text
+
+                    with get_session() as session:
+                        session.execute(
+                            text("UPDATE athletes SET tp_metrics_available = FALSE WHERE id = :id"),
+                            {"id": athlete.id},
+                        )
+                        session.commit()
+                    break
+                if "403 forbidden" in msg.lower():
+                    metrics = None
+                    metrics_error = "metrics_forbidden"
+                    print(f"⚠️  Metrics unavailable for athlete {athlete.name} (403). Skipping metrics.")
+                    from sqlalchemy import text
+
+                    with get_session() as session:
+                        session.execute(
+                            text("UPDATE athletes SET tp_metrics_available = FALSE WHERE id = :id"),
+                            {"id": athlete.id},
+                        )
+                        session.commit()
+                    break
                 raise
     
     metrics_fetched = len(metrics) if metrics else 0
@@ -234,8 +283,35 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
                 metrics_saved += 1
                 metrics_dates_saved.append(metric_date.isoformat())
 
-    # Recovery alert evaluation (uses existing baselines from DB)
-    alert_result = evaluate_recovery_alert(athlete.id, check_date=end, send_email=False)
+    # Update baselines and metric alerts after metrics ingestion.
+    # This allows the web app Alerts panel to populate automatically.
+    try:
+        if metrics_saved:
+            calculate_baselines(athlete.id, end_date=end)
+            check_alert_conditions(athlete.id, check_date=end)
+    except Exception as e:  # noqa: BLE001
+        # Don't fail ingest if baseline/alerts fail; surface as a note.
+        print(f"⚠️  Baseline/alert update failed for athlete {athlete.id}: {e}")
+
+    # Recovery alert evaluation (uses baselines from DB)
+    recovery_threshold = 0.05
+    alert_result = evaluate_recovery_alert(
+        athlete.id,
+        check_date=end,
+        threshold=recovery_threshold,
+        send_email=False,
+    )
+    try:
+        upsert_recovery_alert_run(
+            athlete.id,
+            end,
+            threshold=float(recovery_threshold),
+            triggered=bool(alert_result.get("triggered")) if isinstance(alert_result, dict) else False,
+            reason=str(alert_result.get("reason")) if isinstance(alert_result, dict) else "unknown",
+            metrics=(alert_result.get("metrics") if isinstance(alert_result, dict) else {}) or {},
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"⚠️  Failed to persist recovery alert run for athlete {athlete.id} on {end}: {e}")
     latest_compliance = get_compliance_for_day(athlete.id, end)
 
     return {
@@ -251,6 +327,9 @@ def ingest_recent(days: int = 7, athlete_id: int | None = None):
         "first_workout_sample": first_workout_sample,
         "metrics_fetched": metrics_fetched,
         "metrics_saved": metrics_saved,
+        "metrics_attempts": metrics_attempts,
+        "metrics_http_status": metrics_http_status,
+        "metrics_error": metrics_error,
         "metrics_dates_saved": sorted(metrics_dates_saved),  # Show which specific dates were saved
         "metrics_raw_sample": metrics_raw_sample,
         "metric_field_names": sorted(list(metric_field_names)),

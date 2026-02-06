@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from collections import defaultdict
+from datetime import date, timedelta, datetime
+import math
 import hashlib
+import json
 from typing import Optional
 
 import requests
@@ -9,16 +12,34 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
-from sqlalchemy import select
+from sqlalchemy import select, delete, text
 
 from app.auth.oauth import fetch_token, get_authorization_url
 from app.data.db import init_db, get_session
-from app.models.tables import Athlete, CoachRosterMember, DailyMetric, MetricAlert, Workout
+from app.models.tables import (
+    Athlete,
+    CoachRosterMember,
+    DailyMetric,
+    MetricAlert,
+    RecoveryAlertRun,
+    Workout,
+    WorkoutCompliance,
+    WTODashboardAthleteMap,
+    WTORaceResult,
+)
 from app.services.athletes import upsert_athlete
 from app.services.jobs import enqueue_job, get_job
 from app.services import compliance as compliance_service
+from app.services.baseline import calculate_baselines, check_alert_conditions, get_baseline_asof
+from app.services.tp_api import get_api
+from app.services.tokens import get_token as get_token_row, find_coach_token
+from app.services.race_results import load_local_race_results, pick_best_worst
+from app.services.recovery_alerts import evaluate_recovery_alert
+from app.services.recovery_alert_runs import list_recovery_alert_runs, upsert_recovery_alert_run
+from app.data.triathlon_db import get_triathlon_engine
 from app.utils.dates import get_effective_today
 from app.utils.settings import settings
+from app.scheduling.scheduler import start_scheduler, stop_scheduler
 
 
 templates = Jinja2Templates(directory="app/webapp/templates")
@@ -52,6 +73,40 @@ def _parse_date(value: str | None) -> Optional[date]:
         return None
 
 
+def _coerce_date(value: object) -> Optional[date]:
+    """Best-effort convert API date fields to a date.
+
+    TrainingPeaks responses sometimes include timestamps (YYYY-MM-DDTHH:MM:SS).
+    """
+    if not value:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    s = str(value)
+    if not s:
+        return None
+    if "T" in s:
+        s = s.split("T", 1)[0]
+    try:
+        return date.fromisoformat(s)
+    except Exception:
+        try:
+            return datetime.strptime(s, "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+
+def _is_truthy(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    s = str(value).strip().lower()
+    return s in {"1", "true", "t", "yes", "y", "on"}
+
+
 def _get_session_athlete_id(request: Request) -> Optional[int]:
     raw = request.session.get("athlete_id")
     try:
@@ -68,6 +123,8 @@ def _extract_tp_athlete_id(profile: object) -> Optional[int]:
         profile.get("athlete_id"),
         profile.get("athleteID"),
         profile.get("id"),
+        profile.get("userId"),
+        profile.get("user_id"),
     ]
     nested = profile.get("athlete")
     if isinstance(nested, dict):
@@ -80,6 +137,55 @@ def _extract_tp_athlete_id(profile: object) -> Optional[int]:
         except Exception:
             continue
     return None
+
+
+def _merge_coach_roster(from_coach_id: int, to_coach_id: int) -> None:
+    """Move roster memberships from one coach identity to another.
+
+    This prevents a common issue where a coach login falls back to a local identity
+    (external_id like tp_coach_*) and later logins resolve to a different local identity.
+    """
+    if int(from_coach_id) == int(to_coach_id):
+        return
+    with get_session() as session:
+        # Avoid unique constraint violations by removing overlaps first.
+        from_members = session.execute(
+            select(CoachRosterMember.athlete_id).where(CoachRosterMember.coach_athlete_id == int(from_coach_id))
+        ).scalars().all()
+        if not from_members:
+            return
+        existing_members = set(
+            session.execute(
+                select(CoachRosterMember.athlete_id).where(CoachRosterMember.coach_athlete_id == int(to_coach_id))
+            ).scalars().all()
+        )
+        # Insert missing
+        for athlete_id in from_members:
+            if int(athlete_id) in existing_members:
+                continue
+            session.add(CoachRosterMember(coach_athlete_id=int(to_coach_id), athlete_id=int(athlete_id)))
+        # Delete old memberships
+        session.execute(delete(CoachRosterMember).where(CoachRosterMember.coach_athlete_id == int(from_coach_id)))
+        session.commit()
+
+
+def _update_athlete_fields(athlete_id: int, *, name: str | None = None, email: str | None = None, tp_athlete_id: int | None = None) -> None:
+    with get_session() as session:
+        athlete = session.get(Athlete, int(athlete_id))
+        if not athlete:
+            return
+        changed = False
+        if name and athlete.name != name:
+            athlete.name = name
+            changed = True
+        if email and athlete.email != email:
+            athlete.email = email
+            changed = True
+        if tp_athlete_id and getattr(athlete, "tp_athlete_id", None) != int(tp_athlete_id):
+            athlete.tp_athlete_id = int(tp_athlete_id)
+            changed = True
+        if changed:
+            session.commit()
 
 
 def _get_or_create_local_identity(external_id: str, name: str | None = None, email: str | None = None) -> Athlete:
@@ -137,6 +243,16 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Podium Dashboard Web")
     app.add_middleware(SessionMiddleware, secret_key=settings.secret_key)
 
+    @app.on_event("startup")
+    def _startup_scheduler() -> None:
+        if settings.enable_scheduler:
+            start_scheduler()
+
+    @app.on_event("shutdown")
+    def _shutdown_scheduler() -> None:
+        if settings.enable_scheduler:
+            stop_scheduler()
+
     @app.get("/", response_class=HTMLResponse)
     def root(request: Request):
         athlete_id = _get_session_athlete_id(request)
@@ -187,12 +303,36 @@ def create_app() -> FastAPI:
         token_scope = str(token.get("scope") or "")
         role = (role_hint or ("coach" if "coach:athletes" in token_scope else "athlete")).strip().lower()
 
-        # Some providers include identity fields directly in the token response.
-        # Prefer that, especially for coach logins where profile endpoints may require athlete-only scopes.
-        tp_athlete_id = _extract_tp_athlete_id(token)
-
-        # Fetch profile to get a stable TP identity.
+        # For coaches, TP provides a stable CoachId via /v1/coach/profile.
+        # Prefer this over token-derived fallbacks so we don't create duplicate local coach identities.
         headers = {"Authorization": f"Bearer {token.get('access_token')}", "Accept": "application/json"}
+        coach_tp_id: int | None = None
+        if role == "coach":
+            coach_profile_url = f"{settings.tp_api_base.rstrip('/')}/v1/coach/profile"
+            try:
+                coach_resp = requests.get(coach_profile_url, headers=headers, timeout=20)
+                if coach_resp.status_code == 200:
+                    coach_prof = coach_resp.json() or {}
+                    coach_id_raw = None
+                    if isinstance(coach_prof, dict):
+                        coach_id_raw = coach_prof.get("CoachId") or coach_prof.get("coachId") or coach_prof.get("id")
+                    if coach_id_raw is not None:
+                        coach_tp_id = int(coach_id_raw)
+                        coach_first = coach_prof.get("FirstName") if isinstance(coach_prof, dict) else None
+                        coach_last = coach_prof.get("LastName") if isinstance(coach_prof, dict) else None
+                        coach_name = " ".join([p for p in [coach_first, coach_last] if p]) or None
+                        # Create/reuse a stable local coach identity based on CoachId.
+                        athlete = _get_or_create_local_identity(
+                            external_id=f"tp_coach_{coach_tp_id}",
+                            name=coach_name or "TrainingPeaks Coach",
+                        )
+            except Exception:
+                coach_tp_id = None
+
+        # If we already established a coach identity, we can skip athlete identity resolution.
+        tp_athlete_id = None if coach_tp_id is not None else _extract_tp_athlete_id(token)
+
+        # Fetch athlete profile (may fail for coach tokens depending on TP scope rules).
         profile_url = f"{settings.tp_api_base.rstrip('/')}/v1/athlete/profile"
         prof = {}
         profile_status = None
@@ -207,20 +347,34 @@ def create_app() -> FastAPI:
         except Exception:
             prof = {}
 
-        if not tp_athlete_id:
+        if tp_athlete_id is None:
             tp_athlete_id = _extract_tp_athlete_id(prof)
 
         name = prof.get("name") if isinstance(prof, dict) else None
         email = prof.get("email") if isinstance(prof, dict) else None
 
-        if not tp_athlete_id:
+        if coach_tp_id is not None:
+            # We already created a stable coach identity from CoachId above.
+            # If the athlete profile is accessible, attach its tp_athlete_id/email/name to this coach row.
+            if tp_athlete_id:
+                _update_athlete_fields(int(athlete.id), name=name, email=email, tp_athlete_id=int(tp_athlete_id))
+            else:
+                _update_athlete_fields(int(athlete.id), name=name, email=email)
+        elif not tp_athlete_id:
             # Coach tokens may not be allowed to access /v1/athlete/profile (or TP may reject mixed scopes).
             # We still allow login by creating a stable local identity keyed off the refresh token.
             if role == "coach":
-                raw = token.get("refresh_token") or token.get("access_token") or ""
-                digest = hashlib.sha256(str(raw).encode("utf-8")).hexdigest()[:12] if raw else "unknown"
+                # Prefer a stable identity when possible.
+                # - If we have an email, key off that (stable across logins).
+                # - Else fall back to token-derived digest (may change across reauth).
+                if email:
+                    external_id = f"tp_coach_email_{email.strip().lower()}"
+                else:
+                    raw = token.get("refresh_token") or token.get("access_token") or ""
+                    digest = hashlib.sha256(str(raw).encode("utf-8")).hexdigest()[:12] if raw else "unknown"
+                    external_id = f"tp_coach_{digest}"
                 athlete = _get_or_create_local_identity(
-                    external_id=f"tp_coach_{digest}",
+                    external_id=external_id,
                     name=name or "TrainingPeaks Coach",
                     email=email,
                 )
@@ -234,6 +388,49 @@ def create_app() -> FastAPI:
         else:
             athlete = upsert_athlete(tp_athlete_id=int(tp_athlete_id), name=name, email=email)
 
+        # If this is a coach login, attempt to merge any prior fallback coach identities
+        # (tp_coach_*) that already have a roster into this coach identity.
+        if role == "coach":
+            with get_session() as session:
+                current_roster_count = session.execute(
+                    select(CoachRosterMember.id).where(CoachRosterMember.coach_athlete_id == int(athlete.id))
+                ).scalars().all()
+                has_roster = bool(current_roster_count)
+
+                # Prefer matching by email when possible.
+                candidates_stmt = (
+                    select(Athlete.id)
+                    .where(Athlete.id != int(athlete.id))
+                    .where(Athlete.external_id.like("tp_coach%"))
+                )
+                if athlete.email:
+                    candidates_stmt = candidates_stmt.where(Athlete.email == athlete.email)
+                candidate_ids = session.execute(candidates_stmt).scalars().all()
+
+                # Only consider candidates that actually have roster rows.
+                roster_candidate_ids = []
+                for cid in candidate_ids:
+                    count = session.execute(
+                        select(CoachRosterMember.id).where(CoachRosterMember.coach_athlete_id == int(cid))
+                    ).scalars().first()
+                    if count is not None:
+                        roster_candidate_ids.append(int(cid))
+
+            # If we don't already have a roster, or if there's a clear previous identity,
+            # merge roster memberships forward.
+            if roster_candidate_ids and (not has_roster or len(roster_candidate_ids) == 1):
+                # If multiple, pick the one with the most roster entries.
+                best_id = roster_candidate_ids[0]
+                if len(roster_candidate_ids) > 1:
+                    with get_session() as session:
+                        best_id = max(
+                            roster_candidate_ids,
+                            key=lambda cid: session.execute(
+                                select(CoachRosterMember.id).where(CoachRosterMember.coach_athlete_id == int(cid))
+                            ).scalars().all().__len__(),
+                        )
+                _merge_coach_roster(from_coach_id=best_id, to_coach_id=int(athlete.id))
+
         # Store token under this athlete identity (reuses existing tokens system).
         from app.services.tokens import store_token
 
@@ -244,9 +441,17 @@ def create_app() -> FastAPI:
         request.session["athlete_id"] = int(athlete.id)
         request.session["role"] = "coach" if role == "coach" else "athlete"
 
-        # Option A: on first coach login, automatically enqueue roster sync.
+        # Option A: automatically enqueue roster sync if roster is empty.
         if request.session["role"] == "coach":
-            enqueue_job("sync_roster", requested_by_athlete_id=int(athlete.id))
+            with get_session() as session:
+                has_roster = (
+                    session.execute(
+                        select(CoachRosterMember.id).where(CoachRosterMember.coach_athlete_id == int(athlete.id))
+                    ).scalars().first()
+                    is not None
+                )
+            if not has_roster:
+                enqueue_job("sync_roster", requested_by_athlete_id=int(athlete.id))
             return RedirectResponse(url="/coach", status_code=302)
 
         return RedirectResponse(url="/me", status_code=302)
@@ -306,9 +511,107 @@ def create_app() -> FastAPI:
     @app.get("/partials/job_status", response_class=HTMLResponse)
     def partial_job_status(request: Request, job_id: int, _: int = Depends(require_login)):
         job = get_job(int(job_id))
-        return templates.TemplateResponse(
+        resp = templates.TemplateResponse(
             "partials/job_status.html",
             {"request": request, "job": job},
+        )
+        # When a sync finishes, prompt the UI to refresh the currently visible panels.
+        # (Elements opt-in via hx-trigger="podiumRefresh from:body".)
+        if job and getattr(job, "status", None) == "succeeded":
+            resp.headers["HX-Trigger"] = "podiumRefresh"
+        return resp
+
+    @app.get("/partials/tp_debug", response_class=HTMLResponse)
+    def partial_tp_debug(
+        request: Request,
+        target_athlete_id: int,
+        start: str,
+        end: str,
+        requester_id: int = Depends(require_login),
+    ):
+        role = request.session.get("role") or "athlete"
+        if not can_access_athlete(requester_id, role, int(target_athlete_id)):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        start_d = _parse_date(start)
+        end_d = _parse_date(end)
+        if not start_d or not end_d:
+            raise HTTPException(status_code=400, detail="Invalid date range")
+
+        with get_session() as session:
+            athlete = session.get(Athlete, int(target_athlete_id))
+        if not athlete:
+            raise HTTPException(status_code=404, detail="Athlete not found")
+
+        tp_athlete_id = getattr(athlete, "tp_athlete_id", None)
+        if not tp_athlete_id:
+            return templates.TemplateResponse(
+                "partials/tp_debug.html",
+                {
+                    "request": request,
+                    "debug": {
+                        "athlete_id": int(target_athlete_id),
+                        "athlete_name": getattr(athlete, "name", None),
+                        "tp_athlete_id": None,
+                        "range": f"{start_d.isoformat()}..{end_d.isoformat()}",
+                        "has_athlete_token": bool(get_token_row(int(target_athlete_id))),
+                        "has_coach_token": bool(find_coach_token()),
+                        "note": "This athlete has no tp_athlete_id set, so athlete-scoped v2 endpoints cannot be called.",
+                    },
+                },
+            )
+
+        api = get_api(int(target_athlete_id))
+        # Use the same token selection + refresh behavior as normal API calls.
+        headers = api._headers()  # noqa: SLF001
+        safe_headers = {
+            k: ("Bearer ***" if k.lower() == "authorization" else v)
+            for k, v in (headers or {}).items()
+        }
+
+        base = settings.tp_api_base.rstrip("/")
+        workouts_url = f"{base}/v2/workouts/{int(tp_athlete_id)}/{start_d.isoformat()}/{end_d.isoformat()}"
+        metrics_url = f"{base}/v2/metrics/{int(tp_athlete_id)}/{start_d.isoformat()}/{end_d.isoformat()}"
+        metrics_self_url = f"{base}/v2/metrics/{start_d.isoformat()}/{end_d.isoformat()}"
+
+        def _call(url: str) -> dict:
+            out: dict[str, object] = {"url": url}
+            try:
+                r = requests.get(url, headers=headers, timeout=30)
+                out["status"] = int(r.status_code)
+                if r.status_code == 200:
+                    try:
+                        payload = r.json()
+                        if isinstance(payload, list):
+                            out["count"] = len(payload)
+                        else:
+                            out["count"] = None
+                    except Exception as e:  # noqa: BLE001
+                        out["error"] = f"json_decode_error: {e}"
+                else:
+                    out["body_snippet"] = (r.text or "").strip()[:600]
+            except Exception as e:  # noqa: BLE001
+                out["error"] = str(e)
+            return out
+
+        debug = {
+            "athlete_id": int(target_athlete_id),
+            "athlete_name": getattr(athlete, "name", None),
+            "tp_athlete_id": int(tp_athlete_id),
+            "range": f"{start_d.isoformat()}..{end_d.isoformat()}",
+            "has_athlete_token": bool(get_token_row(int(target_athlete_id))),
+            "has_coach_token": bool(find_coach_token()),
+            "using_coach_token": bool(getattr(api, "_using_coach_token", False)),
+            "headers": safe_headers,
+            "workouts": _call(workouts_url),
+            "metrics": _call(metrics_url),
+            "metrics_self": _call(metrics_self_url),
+            "note": "This runs the same athlete-scoped v2 URLs the worker uses. Tokens are masked.",
+        }
+
+        return templates.TemplateResponse(
+            "partials/tp_debug.html",
+            {"request": request, "debug": debug},
         )
 
     @app.get("/partials/workouts", response_class=HTMLResponse)
@@ -388,6 +691,1488 @@ def create_app() -> FastAPI:
             {"request": request, "metrics": metrics, "available": available},
         )
 
+    @app.get("/partials/recovery_trends", response_class=HTMLResponse)
+    def partial_recovery_trends(
+        request: Request,
+        target_athlete_id: int,
+        start: str,
+        end: str,
+        requester_id: int = Depends(require_login),
+    ):
+        role = request.session.get("role") or "athlete"
+        if not can_access_athlete(requester_id, role, target_athlete_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        start_d = _parse_date(start)
+        end_d = _parse_date(end)
+        if not start_d or not end_d:
+            raise HTTPException(status_code=400, detail="Invalid date range")
+
+        # Pull a full year so rolling windows are well-defined.
+        calc_start = end_d - timedelta(days=365)
+
+        with get_session() as session:
+            stmt = (
+                select(DailyMetric)
+                .where(DailyMetric.athlete_id == int(target_athlete_id))
+                .where(DailyMetric.date >= calc_start)
+                .where(DailyMetric.date <= end_d)
+                .order_by(DailyMetric.date)
+            )
+            rows = session.execute(stmt).scalars().all()
+
+        if not rows or len(rows) < 7:
+            return templates.TemplateResponse(
+                "partials/recovery_trends.html",
+                {
+                    "request": request,
+                    "has_data": False,
+                    "message": "Need at least 7 days of daily metrics to show trend charts. Sync metrics first.",
+                },
+            )
+
+        import pandas as pd
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+
+        df = pd.DataFrame(
+            [
+                {
+                    "date": r.date,
+                    "rhr": r.rhr,
+                    "hrv": r.hrv,
+                    "sleep": r.sleep_hours,
+                }
+                for r in rows
+            ]
+        )
+        if df.empty:
+            return templates.TemplateResponse(
+                "partials/recovery_trends.html",
+                {"request": request, "has_data": False, "message": "No metrics available for charting."},
+            )
+
+        df.sort_values("date", inplace=True)
+
+        # Rolling averages
+        df["hrv_7d"] = df["hrv"].rolling(window=7, min_periods=1).mean()
+        df["hrv_90d"] = df["hrv"].rolling(window=90, min_periods=1).mean()
+        df["rhr_7d"] = df["rhr"].rolling(window=7, min_periods=1).mean()
+        df["rhr_90d"] = df["rhr"].rolling(window=90, min_periods=1).mean()
+        df["sleep_weekly"] = df["sleep"].rolling(window=7, min_periods=1).mean()
+
+        df_display = df[(df["date"] >= start_d) & (df["date"] <= end_d)].copy()
+        if df_display.empty:
+            return templates.TemplateResponse(
+                "partials/recovery_trends.html",
+                {
+                    "request": request,
+                    "has_data": False,
+                    "message": "No metrics in the selected date range.",
+                },
+            )
+
+        # Alert markers (fatigue flags + metric anomalies)
+        triggered_days: set[date] = set()
+        metric_alerts_by_day: dict[date, set[str]] = {}
+
+        try:
+            runs_all = list_recovery_alert_runs(int(target_athlete_id), start=start_d, end=end_d, limit=500)
+            for r in runs_all or []:
+                d = getattr(r, "alert_date", None)
+                if isinstance(d, date) and bool(getattr(r, "triggered", False)):
+                    triggered_days.add(d)
+        except Exception:
+            triggered_days = set()
+
+        try:
+            with get_session() as session:
+                stmt = (
+                    select(MetricAlert)
+                    .where(MetricAlert.athlete_id == int(target_athlete_id))
+                    .where(MetricAlert.alert_date >= start_d)
+                    .where(MetricAlert.alert_date <= end_d)
+                    .where(MetricAlert.severity.in_(["yellow", "red"]))
+                )
+                for a in session.execute(stmt).scalars().all():
+                    d = getattr(a, "alert_date", None)
+                    if not isinstance(d, date):
+                        continue
+                    metric_alerts_by_day.setdefault(d, set()).add(str(getattr(a, "metric_name", "") or ""))
+        except Exception:
+            metric_alerts_by_day = {}
+
+        # Build marker payloads for the charts.
+        date_to_hrv = {d: float(v) for d, v in zip(df_display["date"], df_display["hrv_7d"], strict=False)}
+        date_to_rhr = {d: float(v) for d, v in zip(df_display["date"], df_display["rhr_7d"], strict=False)}
+
+        marker_dates_all = sorted(set(metric_alerts_by_day.keys()) | set(triggered_days))
+
+        def _marker_text(d: date, metric_filter: str | None = None) -> str:
+            parts: list[str] = []
+            if d in triggered_days:
+                parts.append("Fatigue flag")
+            metrics = metric_alerts_by_day.get(d) or set()
+            if metric_filter:
+                metrics = {m for m in metrics if m == metric_filter}
+            if metrics:
+                metrics_list = ", ".join(sorted({m for m in metrics if m}))
+                if metrics_list:
+                    parts.append(f"Metric alerts: {metrics_list}")
+            return " • ".join(parts) if parts else "Alert"
+
+        # HRV chart
+        fig_hrv = make_subplots(specs=[[{"secondary_y": True}]])
+        fig_hrv.add_trace(
+            go.Scatter(
+                x=df_display["date"],
+                y=df_display["hrv_90d"],
+                name="HRV 90-day",
+                line=dict(color="#1f77b4", width=2.8),
+            ),
+            secondary_y=False,
+        )
+        fig_hrv.add_trace(
+            go.Scatter(
+                x=df_display["date"],
+                y=df_display["hrv_7d"],
+                name="HRV 7-day",
+                line=dict(color="#a8d5ff", width=2),
+            ),
+            secondary_y=False,
+        )
+        fig_hrv.add_trace(
+            go.Scatter(
+                x=df_display["date"],
+                y=df_display["sleep_weekly"],
+                name="Avg Sleep (weekly)",
+                line=dict(color="#9467bd", width=4, dash="dash"),
+            ),
+            secondary_y=True,
+        )
+
+        # Red markers for fatigue flags and HRV metric alerts
+        hrv_marker_dates = [d for d in marker_dates_all if d in date_to_hrv and (d in triggered_days or ("hrv" in (metric_alerts_by_day.get(d) or set())))]
+        if hrv_marker_dates:
+            fig_hrv.add_trace(
+                go.Scatter(
+                    x=hrv_marker_dates,
+                    y=[date_to_hrv[d] for d in hrv_marker_dates],
+                    mode="markers",
+                    name="Alerts",
+                    marker=dict(color="#ef4444", size=10, line=dict(color="white", width=1)),
+                    text=[_marker_text(d, "hrv") for d in hrv_marker_dates],
+                    hovertemplate="%{x|%Y-%m-%d}<br>%{text}<extra></extra>",
+                ),
+                secondary_y=False,
+            )
+        fig_hrv.update_xaxes(title_text="Date")
+        fig_hrv.update_yaxes(title_text="HRV", secondary_y=False)
+        fig_hrv.update_yaxes(title_text="Sleep Hours", secondary_y=True)
+        fig_hrv.update_layout(
+            title="HRV Rolling Averages with Weekly Sleep",
+            hovermode="x unified",
+            height=460,
+            margin=dict(l=40, r=40, t=55, b=40),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+
+        # RHR chart
+        fig_rhr = make_subplots(specs=[[{"secondary_y": True}]])
+        fig_rhr.add_trace(
+            go.Scatter(
+                x=df_display["date"],
+                y=df_display["rhr_90d"],
+                name="RHR 90-day",
+                line=dict(color="#1f77b4", width=2.8),
+            ),
+            secondary_y=False,
+        )
+        fig_rhr.add_trace(
+            go.Scatter(
+                x=df_display["date"],
+                y=df_display["rhr_7d"],
+                name="RHR 7-day",
+                line=dict(color="#a8d5ff", width=2),
+            ),
+            secondary_y=False,
+        )
+        fig_rhr.add_trace(
+            go.Scatter(
+                x=df_display["date"],
+                y=df_display["sleep_weekly"],
+                name="Avg Sleep (weekly)",
+                line=dict(color="#9467bd", width=4, dash="dash"),
+            ),
+            secondary_y=True,
+        )
+
+        # Red markers for fatigue flags and RHR metric alerts
+        rhr_marker_dates = [d for d in marker_dates_all if d in date_to_rhr and (d in triggered_days or ("rhr" in (metric_alerts_by_day.get(d) or set())))]
+        if rhr_marker_dates:
+            fig_rhr.add_trace(
+                go.Scatter(
+                    x=rhr_marker_dates,
+                    y=[date_to_rhr[d] for d in rhr_marker_dates],
+                    mode="markers",
+                    name="Alerts",
+                    marker=dict(color="#ef4444", size=10, line=dict(color="white", width=1)),
+                    text=[_marker_text(d, "rhr") for d in rhr_marker_dates],
+                    hovertemplate="%{x|%Y-%m-%d}<br>%{text}<extra></extra>",
+                ),
+                secondary_y=False,
+            )
+        fig_rhr.update_xaxes(title_text="Date")
+        fig_rhr.update_yaxes(title_text="Resting HR (bpm)", secondary_y=False)
+        fig_rhr.update_yaxes(title_text="Sleep Hours", secondary_y=True)
+        fig_rhr.update_layout(
+            title="Resting Heart Rate Rolling Averages with Weekly Sleep",
+            hovermode="x unified",
+            height=460,
+            margin=dict(l=40, r=40, t=55, b=40),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+
+        return templates.TemplateResponse(
+            "partials/recovery_trends.html",
+            {
+                "request": request,
+                "has_data": True,
+                # Use Plotly's JSON serializer to handle numpy/pandas types.
+                "fig_hrv_json": fig_hrv.to_json(),
+                "fig_rhr_json": fig_rhr.to_json(),
+            },
+        )
+
+    @app.get("/partials/recovery_summary", response_class=HTMLResponse)
+    def partial_recovery_summary(
+        request: Request,
+        target_athlete_id: int,
+        end: str | None = None,
+        requester_id: int = Depends(require_login),
+    ):
+        role = request.session.get("role") or "athlete"
+        if not can_access_athlete(requester_id, role, target_athlete_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        end_d = _parse_date(end) or get_effective_today()
+
+        def _select_baseline_mean(athlete_id: int, metric_name: str) -> tuple[float | None, str | None]:
+            # Prefer monthly baseline (stable), fall back to longer windows if needed.
+            for window in ("monthly", "quarterly", "semiannual", "annual"):
+                b = get_baseline_asof(int(athlete_id), metric_name, window, end_d)
+                if b and b.mean is not None:
+                    return float(b.mean), window
+            return None, None
+
+        with get_session() as session:
+            # "Current" is the most recent metric at or before the selected end date.
+            metric = session.execute(
+                select(DailyMetric)
+                .where(DailyMetric.athlete_id == int(target_athlete_id))
+                .where(DailyMetric.date <= end_d)
+                .order_by(DailyMetric.date.desc())
+            ).scalars().first()
+
+        hrv_base, hrv_window = _select_baseline_mean(int(target_athlete_id), "hrv")
+        sleep_base, sleep_window = _select_baseline_mean(int(target_athlete_id), "sleep_hours")
+        rhr_base, rhr_window = _select_baseline_mean(int(target_athlete_id), "rhr")
+
+        summary = {
+            "as_of": metric.date if metric else None,
+            "hrv": {
+                "baseline": hrv_base,
+                "baseline_window": hrv_window,
+                "current": float(metric.hrv) if metric and metric.hrv is not None else None,
+            },
+            "sleep": {
+                "baseline": sleep_base,
+                "baseline_window": sleep_window,
+                "current": float(metric.sleep_hours) if metric and metric.sleep_hours is not None else None,
+            },
+            "rhr": {
+                "baseline": rhr_base,
+                "baseline_window": rhr_window,
+                "current": float(metric.rhr) if metric and metric.rhr is not None else None,
+            },
+        }
+
+        return templates.TemplateResponse(
+            "partials/recovery_summary.html",
+            {
+                "request": request,
+                "end": end_d,
+                "summary": summary,
+            },
+        )
+
+    @app.get("/partials/race_performance", response_class=HTMLResponse)
+    def partial_race_performance(
+        request: Request,
+        target_athlete_id: int,
+        race_year: str | None = None,
+        requester_id: int = Depends(require_login),
+    ):
+        role = request.session.get("role") or "athlete"
+        if not can_access_athlete(requester_id, role, target_athlete_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        races_all = load_local_race_results(int(target_athlete_id))
+        years = sorted(
+            {
+                int(r["event_date"].year)
+                for r in races_all
+                if isinstance(r.get("event_date"), date)
+            },
+            reverse=True,
+        )
+
+        if not years:
+            return templates.TemplateResponse(
+                "partials/race_performance.html",
+                {
+                    "request": request,
+                    "has_data": False,
+                    "message": "No local race results found for this athlete yet. Run a race sync and mapping first.",
+                    "years": [],
+                    "selected_year": None,
+                    "race_count": 0,
+                    "finished_count": None,
+                    "best_race": None,
+                    "worst_finished": None,
+                    "fig_json": None,
+                },
+            )
+
+        selected_year: int
+        try:
+            selected_year = int(race_year) if race_year is not None and str(race_year).strip() else years[0]
+        except Exception:
+            selected_year = years[0]
+        if selected_year not in years:
+            selected_year = years[0]
+
+        races_year = [
+            r
+            for r in races_all
+            if isinstance(r.get("event_date"), date) and int(r["event_date"].year) == int(selected_year)
+        ]
+        races_year_sorted = sorted(races_year, key=lambda r: r.get("event_date") or date.min)
+
+        # Default comparison choices: most recent two races in the selected year.
+        races_year_by_recent = sorted(races_year_sorted, key=lambda r: r.get("event_date") or date.min, reverse=True)
+
+        def _race_key(r: dict) -> str | None:
+            eid = r.get("event_id")
+            pid = r.get("prog_id")
+            if not isinstance(eid, int) or not isinstance(pid, int):
+                return None
+            return f"{int(eid)}:{int(pid)}"
+
+        default_a = _race_key(races_year_by_recent[0]) if len(races_year_by_recent) >= 1 else None
+        default_b = _race_key(races_year_by_recent[1]) if len(races_year_by_recent) >= 2 else None
+
+        best_worst = pick_best_worst(races_year_sorted)
+        best_race = best_worst.get("best_finished")
+        worst_finished = best_worst.get("worst_finished")
+
+        finished_count = sum(
+            1
+            for r in races_year_sorted
+            if (r.get("finish_status") == "FINISH") and isinstance(r.get("finish_position"), int)
+        )
+
+        # Chart: plot finished placings as a line, and non-finishes as red X markers at the bottom.
+        xs_finish: list[date] = []
+        ys_finish: list[int] = []
+        finish_names: list[str] = []
+        hover_finish: list[str] = []
+
+        xs_nf: list[date] = []
+        ys_nf: list[int] = []
+        hover_nf: list[str] = []
+
+        def _short_for_annotation(value: str, max_len: int = 34) -> str:
+            s = " ".join((value or "").split())
+            if len(s) <= max_len:
+                return s
+            return s[: max_len - 1] + "…"
+
+        def _format_hover(name: str, prog_name: str | None, status: str | None, placing: int | None) -> str:
+            st = (status or "FINISH").strip().upper() or "FINISH"
+            prog = (prog_name or "").strip()
+            prog_line = f"{prog}<br>" if prog else ""
+            place_str = str(placing) if placing is not None else "—"
+            return f"{name}<br>{prog_line}{st} ● {place_str}"
+
+        for r in races_year_sorted:
+            d = r.get("event_date")
+            if not isinstance(d, date):
+                continue
+            name = str(r.get("event_name") or "Race")
+            status = str(r.get("finish_status") or "")
+            prog_name = r.get("prog_name")
+            pos = r.get("finish_position")
+
+            is_finished = (status.strip().upper() == "FINISH") and isinstance(pos, int)
+            if is_finished:
+                xs_finish.append(d)
+                ys_finish.append(int(pos))
+                finish_names.append(name)
+                hover_finish.append(_format_hover(name, str(prog_name) if prog_name is not None else None, status, int(pos)))
+            else:
+                # Non-finish or no numeric placing: still show the race occurrence.
+                xs_nf.append(d)
+                hover_nf.append(_format_hover(name, str(prog_name) if prog_name is not None else None, status, None))
+
+        fig_json: str | None = None
+        if xs_finish or xs_nf:
+            import plotly.graph_objects as go
+
+            fig = go.Figure()
+            if xs_finish:
+                fig.add_trace(
+                    go.Scatter(
+                        x=xs_finish,
+                        y=ys_finish,
+                        mode="lines+markers",
+                        hovertext=hover_finish,
+                        hoverinfo="text",
+                        line=dict(color="#2563eb", width=3),
+                        marker=dict(color="#2563eb", size=10),
+                        showlegend=False,
+                    )
+                )
+
+            # Place non-finish markers below the worst placing so they appear at the bottom.
+            if xs_nf:
+                bottom_y = (max(ys_finish) if ys_finish else 1) + 3
+                ys_nf = [bottom_y for _ in xs_nf]
+                fig.add_trace(
+                    go.Scatter(
+                        x=xs_nf,
+                        y=ys_nf,
+                        mode="markers",
+                        hovertext=hover_nf,
+                        hoverinfo="text",
+                        marker=dict(color="#dc2626", size=12, symbol="x"),
+                        showlegend=False,
+                    )
+                )
+
+            # Season best: smallest placing number.
+            try:
+                best_i = min(range(len(ys_finish)), key=lambda i: ys_finish[i])
+            except ValueError:
+                best_i = None
+            if best_i is not None and 0 <= best_i < len(xs_finish):
+                best_x = xs_finish[best_i]
+                best_y = ys_finish[best_i]
+                best_name = finish_names[best_i] if best_i < len(finish_names) else "Race"
+                fig.add_trace(
+                    go.Scatter(
+                        x=[best_x],
+                        y=[best_y],
+                        mode="markers",
+                        marker=dict(color="#16a34a", size=14, symbol="star"),
+                        hovertext=[f"Season Best<br>{best_name}<br>FINISH ● {best_y}"],
+                        hoverinfo="text",
+                        showlegend=False,
+                    )
+                )
+                fig.add_annotation(
+                    x=best_x,
+                    y=best_y,
+                    text=f"Season best: {best_y} ({_short_for_annotation(best_name)})",
+                    showarrow=True,
+                    arrowhead=2,
+                    ax=0,
+                    ay=-40,
+                    bgcolor="rgba(220,252,231,0.85)",
+                    bordercolor="#16a34a",
+                    borderwidth=1,
+                    font=dict(color="#166534"),
+                )
+
+            fig.update_xaxes(title_text="Race Date")
+            fig.update_yaxes(title_text="Finish Position", autorange="reversed")
+            fig.update_layout(
+                height=440,
+                margin=dict(l=40, r=40, t=55, b=40),
+                showlegend=False,
+            )
+            fig_json = fig.to_json()
+
+        return templates.TemplateResponse(
+            "partials/race_performance.html",
+            {
+                "request": request,
+                "has_data": True,
+                "message": None,
+                "years": years,
+                "selected_year": selected_year,
+                "races": races_year_by_recent,
+                "default_compare_a": default_a,
+                "default_compare_b": default_b,
+                "race_count": len(races_year_sorted),
+                "finished_count": finished_count,
+                "best_race": best_race,
+                "worst_finished": worst_finished,
+                "fig_json": fig_json,
+            },
+        )
+
+    def _parse_event_prog_key(value: str | None) -> tuple[int, int] | None:
+        if value is None:
+            return None
+        s = str(value).strip()
+        if not s:
+            return None
+        if ":" not in s:
+            return None
+        a, b = s.split(":", 1)
+        try:
+            return int(a), int(b)
+        except Exception:
+            return None
+
+    @app.get("/partials/race_comparison", response_class=HTMLResponse)
+    def partial_race_comparison(
+        request: Request,
+        target_athlete_id: int,
+        compare_race_a: str | None = None,
+        compare_race_b: str | None = None,
+        requester_id: int = Depends(require_login),
+    ):
+        role = request.session.get("role") or "athlete"
+        if not can_access_athlete(requester_id, role, target_athlete_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        key_a = _parse_event_prog_key(compare_race_a)
+        key_b = _parse_event_prog_key(compare_race_b)
+        if not key_a or not key_b:
+            return templates.TemplateResponse(
+                "partials/race_comparison.html",
+                {"request": request, "ready": False, "error": None},
+            )
+        if key_a == key_b:
+            return templates.TemplateResponse(
+                "partials/race_comparison.html",
+                {"request": request, "ready": True, "error": "Choose two different races."},
+            )
+
+        event_id_a, prog_id_a = key_a
+        event_id_b, prog_id_b = key_b
+
+        with get_session() as session:
+            race_a = (
+                session.execute(
+                    select(WTORaceResult)
+                    .where(WTORaceResult.podium_athlete_id == int(target_athlete_id))
+                    .where(WTORaceResult.event_id == int(event_id_a))
+                    .where(WTORaceResult.prog_id == int(prog_id_a))
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            race_b = (
+                session.execute(
+                    select(WTORaceResult)
+                    .where(WTORaceResult.podium_athlete_id == int(target_athlete_id))
+                    .where(WTORaceResult.event_id == int(event_id_b))
+                    .where(WTORaceResult.prog_id == int(prog_id_b))
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            mapping = (
+                session.execute(
+                    select(WTODashboardAthleteMap).where(WTODashboardAthleteMap.podium_athlete_id == int(target_athlete_id))
+                )
+                .scalars()
+                .first()
+            )
+
+        if not race_a or not race_b:
+            return templates.TemplateResponse(
+                "partials/race_comparison.html",
+                {"request": request, "ready": True, "error": "Race selection not found in local cache. Try syncing races again."},
+            )
+        if not mapping or not mapping.wto_athlete_id:
+            return templates.TemplateResponse(
+                "partials/race_comparison.html",
+                {"request": request, "ready": True, "error": "This athlete is not mapped to a WTO athlete yet."},
+            )
+
+        tri_engine = get_triathlon_engine()
+        if tri_engine is None:
+            return templates.TemplateResponse(
+                "partials/race_comparison.html",
+                {"request": request, "ready": True, "error": "TRIATHLON_DATABASE_URL is not configured on this server."},
+            )
+
+        wto_athlete_id = int(mapping.wto_athlete_id)
+
+        def _fetch_position_metrics(event_id: int, prog_id: int) -> dict:
+            sql = text(
+                """
+                SELECT
+                    swimrank,
+                    t1rank,
+                    bikerank,
+                    t2rank,
+                    runrank,
+                    position_at_swim,
+                    position_at_t1,
+                    position_at_bike,
+                    position_at_t2,
+                    position_at_run,
+                    behindswim,
+                    behindt1,
+                    behindbike,
+                    behindt2,
+                    behindrun
+                FROM position_metrics
+                WHERE event_id = :event_id
+                  AND prog_id = :prog_id
+                  AND athlete_id = :athlete_id
+                LIMIT 1
+                """
+            )
+            with tri_engine.connect() as conn:
+                row = conn.execute(
+                    sql,
+                    {"event_id": int(event_id), "prog_id": int(prog_id), "athlete_id": int(wto_athlete_id)},
+                ).mappings().fetchone()
+            return dict(row) if row else {}
+
+        m_a = _fetch_position_metrics(event_id_a, prog_id_a)
+        m_b = _fetch_position_metrics(event_id_b, prog_id_b)
+
+        def _val_or_dash(v: object) -> str:
+            if v is None:
+                return "—"
+            if isinstance(v, str) and not v.strip():
+                return "—"
+            try:
+                if isinstance(v, float) and (v != v):
+                    return "—"
+            except Exception:
+                pass
+            return str(v)
+
+        def _time_to_seconds(v: object) -> int | None:
+            if v is None:
+                return None
+            if isinstance(v, (int, float)):
+                try:
+                    sec = int(v)
+                    return sec if sec >= 0 else None
+                except Exception:
+                    return None
+            if not isinstance(v, str):
+                return None
+
+            s = v.strip()
+            if not s or s == "—":
+                return None
+            # Accept HH:MM:SS, MM:SS, or SS (optionally with fractional seconds)
+            parts = s.split(":")
+            try:
+                if len(parts) == 3:
+                    h = int(parts[0])
+                    m = int(parts[1])
+                    sec = int(float(parts[2]))
+                    return h * 3600 + m * 60 + sec
+                if len(parts) == 2:
+                    m = int(parts[0])
+                    sec = int(float(parts[1]))
+                    return m * 60 + sec
+                if len(parts) == 1:
+                    return int(float(parts[0]))
+            except Exception:
+                return None
+            return None
+
+        def _faster_time_class(a: object, b: object) -> tuple[str, str]:
+            """Return CSS classes for (a,b) where lower duration is better."""
+            as_ = _time_to_seconds(a)
+            bs_ = _time_to_seconds(b)
+            if as_ is None or bs_ is None:
+                return "", ""
+            if as_ < bs_:
+                return "cell-better", ""
+            if bs_ < as_:
+                return "", "cell-better"
+            return "", ""
+
+        def _better_class(a: object, b: object, *, invert: bool = False) -> tuple[str, str]:
+            """Return CSS classes for (a,b). Lower is better by default."""
+            try:
+                ai = int(a) if a is not None else None
+            except Exception:
+                ai = None
+            try:
+                bi = int(b) if b is not None else None
+            except Exception:
+                bi = None
+
+            if ai is None or bi is None:
+                return "", ""
+            # For these metrics, lower is better.
+            if invert:
+                ai, bi = -ai, -bi
+            if ai < bi:
+                return "cell-better", ""
+            if bi < ai:
+                return "", "cell-better"
+            return "", ""
+
+        rank_defs = [
+            ("Swim", "swimrank", "swim_time"),
+            ("T1", "t1rank", "t1_time"),
+            ("Bike", "bikerank", "bike_time"),
+            ("T2", "t2rank", "t2_time"),
+            ("Run", "runrank", "run_time"),
+        ]
+        rank_rows: list[dict] = []
+        for label, rank_key, time_attr in rank_defs:
+            a_val = m_a.get(rank_key)
+            b_val = m_b.get(rank_key)
+            a_class, b_class = _better_class(a_val, b_val)
+
+            a_time_raw = getattr(race_a, time_attr, None)
+            b_time_raw = getattr(race_b, time_attr, None)
+            a_time_class, b_time_class = _faster_time_class(a_time_raw, b_time_raw)
+            rank_rows.append(
+                {
+                    "label": label,
+                    "a_val": _val_or_dash(a_val),
+                    "b_val": _val_or_dash(b_val),
+                    "a_class": a_class,
+                    "b_class": b_class,
+                    "a_time": _val_or_dash(a_time_raw),
+                    "b_time": _val_or_dash(b_time_raw),
+                    "a_time_class": a_time_class,
+                    "b_time_class": b_time_class,
+                }
+            )
+
+        # Build charts (checkpoint placing and gap to leader)
+        checkpoints = ["Swim", "T1", "Bike", "T2", "Run"]
+
+        def _int_or_none(v: object) -> int | None:
+            try:
+                if v is None:
+                    return None
+                return int(v)
+            except Exception:
+                return None
+
+        place_a = [
+            _int_or_none(m_a.get("position_at_swim")),
+            _int_or_none(m_a.get("position_at_t1")),
+            _int_or_none(m_a.get("position_at_bike")),
+            _int_or_none(m_a.get("position_at_t2")),
+            _int_or_none(m_a.get("position_at_run")),
+        ]
+        place_b = [
+            _int_or_none(m_b.get("position_at_swim")),
+            _int_or_none(m_b.get("position_at_t1")),
+            _int_or_none(m_b.get("position_at_bike")),
+            _int_or_none(m_b.get("position_at_t2")),
+            _int_or_none(m_b.get("position_at_run")),
+        ]
+
+        gap_a = [
+            _int_or_none(m_a.get("behindswim")),
+            _int_or_none(m_a.get("behindt1")),
+            _int_or_none(m_a.get("behindbike")),
+            _int_or_none(m_a.get("behindt2")),
+            _int_or_none(m_a.get("behindrun")),
+        ]
+        gap_b = [
+            _int_or_none(m_b.get("behindswim")),
+            _int_or_none(m_b.get("behindt1")),
+            _int_or_none(m_b.get("behindbike")),
+            _int_or_none(m_b.get("behindt2")),
+            _int_or_none(m_b.get("behindrun")),
+        ]
+
+        fig_place_json: str | None = None
+        fig_gap_json: str | None = None
+
+        import plotly.graph_objects as go
+
+        if any(v is not None for v in place_a) or any(v is not None for v in place_b):
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=checkpoints,
+                    y=place_a,
+                    mode="lines+markers",
+                    name="Race A",
+                    line=dict(color="#dc2626", width=3),
+                    marker=dict(color="#dc2626", size=10),
+                    hovertemplate="%{x}<br>Race A ● %{y}<extra></extra>",
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=checkpoints,
+                    y=place_b,
+                    mode="lines+markers",
+                    name="Race B",
+                    line=dict(color="#2563eb", width=3),
+                    marker=dict(color="#2563eb", size=10),
+                    hovertemplate="%{x}<br>Race B ● %{y}<extra></extra>",
+                )
+            )
+            place_vals = [v for v in (place_a + place_b) if isinstance(v, int)]
+            y_bottom = max(place_vals) if place_vals else 1
+            y_bottom = max(int(y_bottom), 1)
+            # Add padding so a place of 1 isn't clipped at the top edge.
+            y_top = 0.5
+            fig.update_yaxes(
+                title_text="Place",
+                autorange=False,
+                range=[y_bottom + 1, y_top],
+            )
+            fig.update_layout(height=360, margin=dict(l=40, r=20, t=20, b=40), legend=dict(orientation="h"))
+            fig_place_json = fig.to_json()
+
+        if any(v is not None for v in gap_a) or any(v is not None for v in gap_b):
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=checkpoints,
+                    y=gap_a,
+                    mode="lines+markers",
+                    name="Race A",
+                    line=dict(color="#dc2626", width=3),
+                    marker=dict(color="#dc2626", size=10),
+                    hovertemplate="%{x}<br>Race A ● %{y}s<extra></extra>",
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=checkpoints,
+                    y=gap_b,
+                    mode="lines+markers",
+                    name="Race B",
+                    line=dict(color="#2563eb", width=3),
+                    marker=dict(color="#2563eb", size=10),
+                    hovertemplate="%{x}<br>Race B ● %{y}s<extra></extra>",
+                )
+            )
+            # Add padding so 0s isn't clipped at the bottom edge.
+            gap_vals = [v for v in (gap_a + gap_b) if isinstance(v, int)]
+            max_gap = max(gap_vals) if gap_vals else 0
+            pad = max(1, int(round(max_gap * 0.08)))
+            fig.update_yaxes(
+                title_text="Seconds Behind Leader",
+                autorange=False,
+                range=[-pad, max_gap + pad],
+            )
+            fig.update_layout(height=360, margin=dict(l=50, r=20, t=20, b=40), legend=dict(orientation="h"))
+            fig_gap_json = fig.to_json()
+
+        def _race_summary(r: WTORaceResult) -> dict:
+            return {
+                "event_date": r.event_date,
+                "event_name": r.event_name or "Race",
+                "prog_name": r.prog_name,
+                "finish_status": getattr(r, "finish_status", None),
+                "finish_position": getattr(r, "finish_position", None),
+                "total_time": getattr(r, "total_time", None),
+            }
+
+        overall_a_class, overall_b_class = _better_class(
+            getattr(race_a, "finish_position", None),
+            getattr(race_b, "finish_position", None),
+        )
+
+        return templates.TemplateResponse(
+            "partials/race_comparison.html",
+            {
+                "request": request,
+                "ready": True,
+                "error": None,
+                "race_a": _race_summary(race_a),
+                "race_b": _race_summary(race_b),
+                "rank_rows": rank_rows,
+                "fig_place_json": fig_place_json,
+                "fig_gap_json": fig_gap_json,
+                "overall_a_class": overall_a_class,
+                "overall_b_class": overall_b_class,
+            },
+        )
+
+    def _sport_norm(value: str | None) -> str:
+        return (value or "").strip().lower()
+
+    def _sport_matches(workout_sport: str | None, desired: str) -> bool:
+        ws = _sport_norm(workout_sport)
+        d = _sport_norm(desired)
+        if not d:
+            return True
+        if d == "run":
+            return ws in {"run", "running"}
+        if d == "bike":
+            return ws in {"bike", "cycling", "ride"}
+        if d == "swim":
+            return ws in {"swim", "swimming"}
+        return ws == d
+
+    def _format_duration(seconds: int | None) -> str:
+        if not isinstance(seconds, int) or seconds <= 0:
+            return "—"
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        s = seconds % 60
+        if h > 0:
+            return f"{h}:{m:02d}:{s:02d}"
+        return f"{m}:{s:02d}"
+
+    @app.get("/partials/race_tp_compare", response_class=HTMLResponse)
+    def partial_race_tp_compare(
+        request: Request,
+        target_athlete_id: int,
+        compare_race_a: str | None = None,
+        compare_race_b: str | None = None,
+        tp_compare_sport: str | None = None,
+        requester_id: int = Depends(require_login),
+    ):
+        role = request.session.get("role") or "athlete"
+        if not can_access_athlete(requester_id, role, target_athlete_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        key_a = _parse_event_prog_key(compare_race_a)
+        key_b = _parse_event_prog_key(compare_race_b)
+        if not key_a or not key_b:
+            return templates.TemplateResponse(
+                "partials/race_tp_compare.html",
+                {"request": request, "error": "Select Race A and Race B above to load TrainingPeaks options."},
+            )
+
+        selected_sport = _sport_norm(tp_compare_sport) or "run"
+        sport_options = [
+            {"value": "run", "label": "Run"},
+            {"value": "bike", "label": "Bike"},
+            {"value": "swim", "label": "Swim"},
+        ]
+
+        (event_id_a, prog_id_a) = key_a
+        (event_id_b, prog_id_b) = key_b
+
+        with get_session() as session:
+            race_a = (
+                session.execute(
+                    select(WTORaceResult)
+                    .where(WTORaceResult.podium_athlete_id == int(target_athlete_id))
+                    .where(WTORaceResult.event_id == int(event_id_a))
+                    .where(WTORaceResult.prog_id == int(prog_id_a))
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            race_b = (
+                session.execute(
+                    select(WTORaceResult)
+                    .where(WTORaceResult.podium_athlete_id == int(target_athlete_id))
+                    .where(WTORaceResult.event_id == int(event_id_b))
+                    .where(WTORaceResult.prog_id == int(prog_id_b))
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            athlete = session.get(Athlete, int(target_athlete_id))
+
+        if not race_a or not race_b:
+            return templates.TemplateResponse(
+                "partials/race_tp_compare.html",
+                {"request": request, "error": "Race selection not found in local cache."},
+            )
+
+        if not athlete or not athlete.tp_athlete_id:
+            return templates.TemplateResponse(
+                "partials/race_tp_compare.html",
+                {"request": request, "error": "This athlete is missing a TrainingPeaks athlete ID (tp_athlete_id). Sync roster/workouts first."},
+            )
+
+        api = get_api(int(target_athlete_id))
+
+        def _tp_workouts_for_day(d: date) -> list[dict]:
+            start = d - timedelta(days=1)
+            end = d + timedelta(days=1)
+            try:
+                workouts = api.fetch_workouts(start, end, tp_athlete_id=int(athlete.tp_athlete_id))
+            except Exception as e:  # noqa: BLE001
+                return [{"workout_id": "", "label": f"(Error fetching workouts: {e})"}]
+
+            out: list[dict] = []
+            for w in workouts or []:
+                wid = w.get("workoutId") or w.get("WorkoutId") or w.get("id") or w.get("Id")
+                if not wid:
+                    continue
+                sport = w.get("WorkoutType") or w.get("sportType") or w.get("sport") or ""
+                title = w.get("Title") or w.get("title") or w.get("WorkoutName") or ""
+                date_field = w.get("workoutDay") or w.get("WorkoutDay") or w.get("Date") or w.get("date")
+                w_day = _coerce_date(date_field)
+
+                completed = bool(w.get("Completed", False))
+                dur_sec = None
+                if completed and w.get("TotalTime"):
+                    try:
+                        val = float(w.get("TotalTime"))
+                        dur_sec = int(val * 3600) if val < 20 else int(val)
+                    except Exception:
+                        dur_sec = None
+
+                tss_val = w.get("TssActual") if completed else None
+                if_val = w.get("IF") if completed else None
+
+                parts = []
+                if w_day:
+                    parts.append(str(w_day))
+                if sport:
+                    parts.append(str(sport))
+                if title:
+                    parts.append(str(title))
+                meta = []
+                if dur_sec:
+                    meta.append(_format_duration(int(dur_sec)))
+                if tss_val is not None:
+                    try:
+                        meta.append(f"TSS {float(tss_val):.0f}")
+                    except Exception:
+                        pass
+                if if_val is not None:
+                    try:
+                        meta.append(f"IF {float(if_val):.2f}")
+                    except Exception:
+                        pass
+
+                label = " • ".join([p for p in parts if p])
+                if meta:
+                    label = f"{label} — {', '.join(meta)}"
+                out.append({"workout_id": str(wid), "sport": str(sport or ""), "duration_sec": dur_sec, "label": label})
+
+            # Prefer matches first, then longer workouts.
+            out.sort(
+                key=lambda x: (
+                    0 if _sport_matches(x.get("sport"), selected_sport) else 1,
+                    -(int(x.get("duration_sec") or 0)),
+                    x.get("label") or "",
+                )
+            )
+            return out
+
+        workouts_a = _tp_workouts_for_day(race_a.event_date)
+        workouts_b = _tp_workouts_for_day(race_b.event_date)
+
+        def _pick_default(workouts: list[dict]) -> str | None:
+            for w in workouts:
+                if w.get("workout_id") and _sport_matches(w.get("sport"), selected_sport):
+                    return str(w["workout_id"])
+            for w in workouts:
+                if w.get("workout_id"):
+                    return str(w["workout_id"])
+            return None
+
+        return templates.TemplateResponse(
+            "partials/race_tp_compare.html",
+            {
+                "request": request,
+                "error": None,
+                "sport_options": sport_options,
+                "selected_sport": selected_sport,
+                "workouts_a": workouts_a,
+                "workouts_b": workouts_b,
+                "selected_workout_a": _pick_default(workouts_a),
+                "selected_workout_b": _pick_default(workouts_b),
+            },
+        )
+
+    def _extract_channels_payload(payload: dict) -> tuple[list[str], list[list[object]]]:
+        wc = payload.get("WorkoutChannels") or {}
+        channels_raw = wc.get("Channels") or []
+        data = wc.get("Data") or []
+
+        channels: list[str] = []
+        for c in channels_raw:
+            if isinstance(c, str):
+                channels.append(c)
+            elif isinstance(c, dict):
+                name = c.get("Name") or c.get("name") or c.get("Channel") or c.get("channel")
+                channels.append(str(name or ""))
+            else:
+                channels.append(str(c))
+
+        rows: list[list[object]] = []
+        if isinstance(data, list):
+            for r in data:
+                if isinstance(r, list):
+                    rows.append(r)
+        return channels, rows
+
+    def _find_channel_index(channels: list[str], candidates: set[str]) -> int | None:
+        if not channels:
+            return None
+        for i, name in enumerate(channels):
+            n = (name or "").strip().lower().replace(" ", "")
+            if n in candidates:
+                return i
+        # fallback substring match
+        for i, name in enumerate(channels):
+            n = (name or "").strip().lower().replace(" ", "")
+            for c in candidates:
+                if c in n:
+                    return i
+        return None
+
+    @app.get("/partials/race_tp_traces", response_class=HTMLResponse)
+    def partial_race_tp_traces(
+        request: Request,
+        target_athlete_id: int,
+        tp_compare_sport: str | None = None,
+        tp_workout_a: str | None = None,
+        tp_workout_b: str | None = None,
+        requester_id: int = Depends(require_login),
+    ):
+        role = request.session.get("role") or "athlete"
+        if not can_access_athlete(requester_id, role, target_athlete_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        sport = _sport_norm(tp_compare_sport) or "run"
+        wid_a = (tp_workout_a or "").strip()
+        wid_b = (tp_workout_b or "").strip()
+        if not wid_a or not wid_b:
+            return templates.TemplateResponse(
+                "partials/race_tp_traces.html",
+                {"request": request, "error": "Select both workouts first.", "fig_json": None, "title": "", "notes": None},
+            )
+
+        with get_session() as session:
+            athlete = session.get(Athlete, int(target_athlete_id))
+
+        if not athlete or not athlete.tp_athlete_id:
+            return templates.TemplateResponse(
+                "partials/race_tp_traces.html",
+                {"request": request, "error": "Missing tp_athlete_id for this athlete.", "fig_json": None, "title": "", "notes": None},
+            )
+
+        api = get_api(int(target_athlete_id))
+        try:
+            data_a = api.fetch_workout_time_series(wid_a, tp_athlete_id=int(athlete.tp_athlete_id))
+            data_b = api.fetch_workout_time_series(wid_b, tp_athlete_id=int(athlete.tp_athlete_id))
+        except Exception as e:  # noqa: BLE001
+            return templates.TemplateResponse(
+                "partials/race_tp_traces.html",
+                {"request": request, "error": str(e), "fig_json": None, "title": "", "notes": None},
+            )
+
+        def _series(payload: dict) -> dict:
+            channels, rows = _extract_channels_payload(payload)
+            n = len(rows)
+            if n == 0:
+                return {"x_min": [], "speed": [], "hr": [], "power": []}
+
+            idx_time = _find_channel_index(channels, {"time", "seconds", "sec", "elapsedtime", "elapsedseconds"})
+            idx_speed = _find_channel_index(channels, {"speed", "velocity", "vel"})
+            idx_hr = _find_channel_index(channels, {"heartrate", "hr"})
+            idx_power = _find_channel_index(channels, {"power", "watts", "w"})
+
+            max_points = 1400
+            stride = max(1, int(math.ceil(n / max_points)))
+
+            xs: list[float] = []
+            speed: list[float | None] = []
+            hr: list[float | None] = []
+            power: list[float | None] = []
+
+            for i in range(0, n, stride):
+                r = rows[i]
+                t_sec: float
+                if idx_time is not None and idx_time < len(r):
+                    try:
+                        t_sec = float(r[idx_time])
+                    except Exception:
+                        t_sec = float(i)
+                else:
+                    t_sec = float(i)
+                xs.append(t_sec / 60.0)
+
+                def _get(idx: int | None) -> float | None:
+                    if idx is None or idx >= len(r):
+                        return None
+                    try:
+                        v = r[idx]
+                        if v is None:
+                            return None
+                        return float(v)
+                    except Exception:
+                        return None
+
+                speed.append(_get(idx_speed))
+                hr.append(_get(idx_hr))
+                power.append(_get(idx_power))
+
+            return {"x_min": xs, "speed": speed, "hr": hr, "power": power}
+
+        s_a = _series(data_a)
+        s_b = _series(data_b)
+
+        import plotly.graph_objects as go
+
+        fig = go.Figure()
+        notes: str | None = None
+
+        def _pace_min_per_mile(speed_mps: float | None) -> float | None:
+            if speed_mps is None or speed_mps <= 0:
+                return None
+            sec_per_mile = 1609.34 / speed_mps
+            return sec_per_mile / 60.0
+
+        def _pace_min_per_100m(speed_mps: float | None) -> float | None:
+            if speed_mps is None or speed_mps <= 0:
+                return None
+            sec_per_100m = 100.0 / speed_mps
+            return sec_per_100m / 60.0
+
+        title = ""
+        if sport == "run":
+            title = "Run: Pace + Heart Rate"
+            y_a = [_pace_min_per_mile(v) for v in s_a["speed"]]
+            y_b = [_pace_min_per_mile(v) for v in s_b["speed"]]
+            fig.add_trace(go.Scatter(x=s_a["x_min"], y=y_a, mode="lines", name="Race A Pace", line=dict(color="#dc2626", width=2)))
+            fig.add_trace(go.Scatter(x=s_b["x_min"], y=y_b, mode="lines", name="Race B Pace", line=dict(color="#2563eb", width=2)))
+
+            if any(v is not None for v in s_a["hr"]) or any(v is not None for v in s_b["hr"]):
+                fig.add_trace(go.Scatter(x=s_a["x_min"], y=s_a["hr"], mode="lines", name="Race A HR", line=dict(color="#dc2626", width=1, dash="dot"), yaxis="y2"))
+                fig.add_trace(go.Scatter(x=s_b["x_min"], y=s_b["hr"], mode="lines", name="Race B HR", line=dict(color="#2563eb", width=1, dash="dot"), yaxis="y2"))
+                fig.update_layout(yaxis2=dict(title="Heart Rate (bpm)", overlaying="y", side="right"))
+            fig.update_yaxes(title_text="Pace (min/mi)")
+
+        elif sport == "bike":
+            title = "Bike: Power + Heart Rate"
+            if any(v is not None for v in s_a["power"]) or any(v is not None for v in s_b["power"]):
+                fig.add_trace(go.Scatter(x=s_a["x_min"], y=s_a["power"], mode="lines", name="Race A Power", line=dict(color="#dc2626", width=2)))
+                fig.add_trace(go.Scatter(x=s_b["x_min"], y=s_b["power"], mode="lines", name="Race B Power", line=dict(color="#2563eb", width=2)))
+                fig.update_yaxes(title_text="Power (W)")
+            else:
+                notes = "No power channel found; showing HR if available."
+
+            if any(v is not None for v in s_a["hr"]) or any(v is not None for v in s_b["hr"]):
+                fig.add_trace(go.Scatter(x=s_a["x_min"], y=s_a["hr"], mode="lines", name="Race A HR", line=dict(color="#dc2626", width=1, dash="dot"), yaxis="y2"))
+                fig.add_trace(go.Scatter(x=s_b["x_min"], y=s_b["hr"], mode="lines", name="Race B HR", line=dict(color="#2563eb", width=1, dash="dot"), yaxis="y2"))
+                fig.update_layout(yaxis2=dict(title="Heart Rate (bpm)", overlaying="y", side="right"))
+            if fig.layout.yaxis.title is None:
+                fig.update_yaxes(title_text="Value")
+
+        else:
+            title = "Swim: Pace"
+            y_a = [_pace_min_per_100m(v) for v in s_a["speed"]]
+            y_b = [_pace_min_per_100m(v) for v in s_b["speed"]]
+            fig.add_trace(go.Scatter(x=s_a["x_min"], y=y_a, mode="lines", name="Race A Pace", line=dict(color="#dc2626", width=2)))
+            fig.add_trace(go.Scatter(x=s_b["x_min"], y=y_b, mode="lines", name="Race B Pace", line=dict(color="#2563eb", width=2)))
+            fig.update_yaxes(title_text="Pace (min/100m)")
+
+        fig.update_xaxes(title_text="Minutes")
+        fig.update_layout(
+            height=420,
+            margin=dict(l=50, r=50, t=30, b=45),
+            legend=dict(orientation="h"),
+        )
+
+        fig_json = fig.to_json() if fig.data else None
+        return templates.TemplateResponse(
+            "partials/race_tp_traces.html",
+            {
+                "request": request,
+                "error": None,
+                "fig_json": fig_json,
+                "title": title,
+                "notes": notes,
+            },
+        )
+
+    @app.get("/partials/coach_tab", response_class=HTMLResponse)
+    def partial_coach_tab(request: Request, tab: str, _: int = Depends(require_coach)):
+        tab_norm = (tab or "").strip().lower()
+        if tab_norm in {"overview", "roster", "roster_overview"}:
+            template = "partials/coach_tab_overview.html"
+        elif tab_norm in {"compliance", "daily_compliance", "workout_compliance"}:
+            template = "partials/coach_tab_compliance.html"
+        elif tab_norm in {"recovery", "metrics", "daily_metrics", "recovery_metrics"}:
+            template = "partials/coach_tab_recovery.html"
+        elif tab_norm in {"race", "races", "performance", "race_performance"}:
+            template = "partials/coach_tab_race.html"
+        else:
+            raise HTTPException(status_code=400, detail="Invalid tab")
+
+        today = get_effective_today()
+        ctx = {
+            "request": request,
+            "default_overview_date": today,
+            "default_compliance_date": today,
+            "default_end": today,
+            "default_start": today - timedelta(days=14),
+        }
+        return templates.TemplateResponse(template, ctx)
+
+    @app.get("/partials/coach_overview", response_class=HTMLResponse)
+    def partial_coach_overview(
+        request: Request,
+        day: str | None = None,
+        coach_id: int = Depends(require_coach),
+    ):
+        day_d = _parse_date(day) or get_effective_today()
+
+        with get_session() as session:
+            roster_stmt = (
+                select(Athlete)
+                .join(CoachRosterMember, CoachRosterMember.athlete_id == Athlete.id)
+                .where(CoachRosterMember.coach_athlete_id == int(coach_id))
+                .order_by(Athlete.name)
+            )
+            roster = session.execute(roster_stmt).scalars().all()
+            athlete_ids = [int(a.id) for a in (roster or [])]
+
+            comp_by_athlete: dict[int, list[WorkoutCompliance]] = defaultdict(list)
+            if athlete_ids:
+                comp_stmt = (
+                    select(WorkoutCompliance)
+                    .where(WorkoutCompliance.athlete_id.in_(athlete_ids))
+                    .where(WorkoutCompliance.workout_date == day_d)
+                )
+                for wc in session.execute(comp_stmt).scalars().all():
+                    comp_by_athlete[int(wc.athlete_id)].append(wc)
+
+            metric_by_athlete: dict[int, list[MetricAlert]] = defaultdict(list)
+            if athlete_ids:
+                alert_stmt = (
+                    select(MetricAlert)
+                    .where(MetricAlert.athlete_id.in_(athlete_ids))
+                    .where(MetricAlert.alert_date == day_d)
+                    .where(MetricAlert.severity.in_(["yellow", "red"]))
+                )
+                for al in session.execute(alert_stmt).scalars().all():
+                    metric_by_athlete[int(al.athlete_id)].append(al)
+
+            fatigue_triggered: set[int] = set()
+            if athlete_ids:
+                run_stmt = (
+                    select(RecoveryAlertRun)
+                    .where(RecoveryAlertRun.athlete_id.in_(athlete_ids))
+                    .where(RecoveryAlertRun.alert_date == day_d)
+                    .where(RecoveryAlertRun.triggered.is_(True))
+                )
+                for run in session.execute(run_stmt).scalars().all():
+                    fatigue_triggered.add(int(run.athlete_id))
+
+        def _completed_flag(wc: WorkoutCompliance) -> bool:
+            actual = getattr(wc, "actual_summary", None)
+            if isinstance(actual, dict):
+                return bool(actual.get("completed"))
+            return False
+
+        def _bucket(wc: WorkoutCompliance) -> str:
+            # Buckets match the daily compliance view: missed (not completed), then good/ok/bad by score.
+            if not _completed_flag(wc):
+                return "missed"
+            score = getattr(wc, "overall_score", None)
+            if score is None:
+                return "ok"
+            try:
+                score_f = float(score)
+            except Exception:
+                return "ok"
+            if score_f >= 85:
+                return "good"
+            if score_f >= 70:
+                return "ok"
+            return "bad"
+
+        rows = []
+        totals = {
+            "roster_size": len(roster or []),
+            "athletes_with_red_workout": 0,
+            "athletes_with_missed_workout": 0,
+            "athletes_with_fatigue_flag": 0,
+            "athletes_with_metric_alert": 0,
+        }
+
+        for a in (roster or []):
+            aid = int(a.id)
+            compliances = comp_by_athlete.get(aid, [])
+
+            workouts_total = len(compliances)
+            workouts_missed = 0
+            workouts_red = 0
+
+            for wc in compliances:
+                b = _bucket(wc)
+                if b == "missed":
+                    workouts_missed += 1
+                elif b == "bad":
+                    workouts_red += 1
+
+            alerts = metric_by_athlete.get(aid, [])
+            metric_red = sum(1 for al in alerts if (getattr(al, "severity", "") or "").lower() == "red")
+            metric_yellow = sum(1 for al in alerts if (getattr(al, "severity", "") or "").lower() == "yellow")
+
+            fatigue = aid in fatigue_triggered
+
+            if workouts_red > 0:
+                totals["athletes_with_red_workout"] += 1
+            if workouts_missed > 0:
+                totals["athletes_with_missed_workout"] += 1
+            if fatigue:
+                totals["athletes_with_fatigue_flag"] += 1
+            if (metric_red + metric_yellow) > 0:
+                totals["athletes_with_metric_alert"] += 1
+
+            status = "blue"
+            if workouts_total > 0:
+                status = "green"
+            if metric_yellow > 0:
+                status = "yellow"
+            if workouts_red > 0 or workouts_missed > 0 or fatigue or metric_red > 0:
+                status = "red"
+
+            rows.append(
+                {
+                    "athlete_id": aid,
+                    "athlete_name": getattr(a, "name", f"Athlete {aid}"),
+                    "status": status,
+                    "workouts_total": workouts_total,
+                    "workouts_missed": workouts_missed,
+                    "workouts_red": workouts_red,
+                    "fatigue_triggered": fatigue,
+                    "metric_red": metric_red,
+                    "metric_yellow": metric_yellow,
+                }
+            )
+
+        # Sort: red first, then yellow, then green/blue; within group sort by name.
+        severity_rank = {"red": 0, "yellow": 1, "green": 2, "blue": 3}
+        rows.sort(key=lambda r: (severity_rank.get(r.get("status"), 9), str(r.get("athlete_name") or "")))
+
+        return templates.TemplateResponse(
+            "partials/coach_overview.html",
+            {
+                "request": request,
+                "day": day_d.isoformat(),
+                "totals": totals,
+                "rows": rows,
+            },
+        )
+
     @app.get("/partials/alerts", response_class=HTMLResponse)
     def partial_alerts(
         request: Request,
@@ -413,18 +2198,248 @@ def create_app() -> FastAPI:
             {"request": request, "alerts": alerts},
         )
 
-    @app.get("/partials/compliance_today", response_class=HTMLResponse)
-    def partial_compliance_today(
+    @app.get("/partials/alerts_overview", response_class=HTMLResponse)
+    def partial_alerts_overview(
         request: Request,
         target_athlete_id: int,
+        start: str,
+        end: str,
+        recovery_triggered_only: str | None = None,
+        recovery_include_ok: str | None = None,
+        metric_name: str | None = None,
+        metric_severity: str | None = None,
         requester_id: int = Depends(require_login),
     ):
         role = request.session.get("role") or "athlete"
         if not can_access_athlete(requester_id, role, target_athlete_id):
             raise HTTPException(status_code=403, detail="Forbidden")
 
-        today = get_effective_today()
-        snapshot = compliance_service.get_compliance_for_day(int(target_athlete_id), today) or {}
+        start_d = _parse_date(start)
+        end_d = _parse_date(end)
+        if not start_d or not end_d:
+            raise HTTPException(status_code=400, detail="Invalid date range")
+        if end_d < start_d:
+            raise HTTPException(status_code=400, detail="End date must be >= start date")
+        days_total = (end_d - start_d).days + 1
+        if days_total > 365:
+            raise HTTPException(status_code=400, detail="Range too large (max 365 days)")
+
+        triggered_only = _is_truthy(recovery_triggered_only)
+        include_ok = _is_truthy(recovery_include_ok)
+
+        metric_name_norm = (metric_name or "").strip()
+        metric_sev_norm = (metric_severity or "").strip().lower()
+        if metric_sev_norm and metric_sev_norm not in {"green", "yellow", "red"}:
+            metric_sev_norm = ""
+
+        # Recovery runs
+        runs_all = list_recovery_alert_runs(int(target_athlete_id), start=start_d, end=end_d, limit=500)
+        runs = []
+        for r in (runs_all or []):
+            if triggered_only and not getattr(r, "triggered", False):
+                continue
+            if not include_ok and not getattr(r, "triggered", False):
+                continue
+            runs.append(r)
+
+        # Metric alerts
+        with get_session() as session:
+            stmt = (
+                select(MetricAlert)
+                .where(MetricAlert.athlete_id == int(target_athlete_id))
+                .where(MetricAlert.alert_date >= start_d)
+                .where(MetricAlert.alert_date <= end_d)
+            )
+            if metric_name_norm:
+                stmt = stmt.where(MetricAlert.metric_name == metric_name_norm)
+            if metric_sev_norm:
+                stmt = stmt.where(MetricAlert.severity == metric_sev_norm)
+            stmt = stmt.order_by(MetricAlert.alert_date.desc()).limit(1500)
+            alerts = session.execute(stmt).scalars().all()
+
+        triggered_days = {getattr(r, "alert_date", None) for r in (runs_all or []) if getattr(r, "triggered", False)}
+        triggered_days = {d for d in triggered_days if isinstance(d, date)}
+        summary = {
+            "days_total": days_total,
+            "metric_alerts": len(alerts or []),
+            "recovery_triggered_days": len(triggered_days),
+            "recovery_runs": len(runs_all or []),
+        }
+        return templates.TemplateResponse(
+            "partials/alerts_overview.html",
+            {
+                "request": request,
+                "summary": summary,
+                "runs": runs,
+                "alerts": alerts,
+            },
+        )
+
+    @app.get("/partials/recovery_alert_runs", response_class=HTMLResponse)
+    def partial_recovery_alert_runs(
+        request: Request,
+        target_athlete_id: int,
+        start: str,
+        end: str,
+        requester_id: int = Depends(require_login),
+    ):
+        role = request.session.get("role") or "athlete"
+        if not can_access_athlete(requester_id, role, target_athlete_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        start_d = _parse_date(start)
+        end_d = _parse_date(end)
+        if not start_d or not end_d:
+            raise HTTPException(status_code=400, detail="Invalid date range")
+
+        runs = list_recovery_alert_runs(int(target_athlete_id), start=start_d, end=end_d, limit=500)
+        return templates.TemplateResponse(
+            "partials/recovery_alert_runs.html",
+            {"request": request, "runs": runs},
+        )
+
+    @app.post("/partials/backfill_alerts", response_class=HTMLResponse)
+    def partial_backfill_alerts(
+        request: Request,
+        target_athlete_id: int | None = Form(None),
+        start: str | None = Form(None),
+        end: str | None = Form(None),
+        requester_id: int = Depends(require_coach),
+    ):
+        # Coach-only action; uses stored DB data only (no TP calls).
+        if target_athlete_id is None or not start or not end:
+            return templates.TemplateResponse(
+                "partials/alerts_backfill.html",
+                {
+                    "request": request,
+                    "error": "Backfill request is missing fields (target_athlete_id/start/end). Try refreshing the page and ensure Start/End dates are set.",
+                    "summary": {
+                        "days_total": 0,
+                        "days_with_metrics": 0,
+                        "metric_alerts_created": 0,
+                        "recovery_triggered": 0,
+                    },
+                },
+            )
+
+        role = request.session.get("role") or "coach"
+        if not can_access_athlete(requester_id, role, int(target_athlete_id)):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        start_d = _parse_date(start)
+        end_d = _parse_date(end)
+        if not start_d or not end_d:
+            raise HTTPException(status_code=400, detail="Invalid date range")
+        if end_d < start_d:
+            raise HTTPException(status_code=400, detail="End date must be >= start date")
+
+        days_total = (end_d - start_d).days + 1
+        if days_total > 365:
+            raise HTTPException(status_code=400, detail="Range too large (max 365 days)")
+
+        metric_alerts_created = 0
+        recovery_triggered = 0
+        days_with_metrics = 0
+        recovery_threshold = 0.05
+
+        with get_session() as session:
+            metric_dates = session.execute(
+                select(DailyMetric.date)
+                .where(DailyMetric.athlete_id == int(target_athlete_id))
+                .where(DailyMetric.date >= start_d)
+                .where(DailyMetric.date <= end_d)
+                .order_by(DailyMetric.date.asc())
+            ).scalars().all()
+
+        metric_dates = sorted({d for d in metric_dates if isinstance(d, date)})
+        days_with_metrics = len(metric_dates)
+
+        if days_with_metrics == 0:
+            return templates.TemplateResponse(
+                "partials/alerts_backfill.html",
+                {
+                    "request": request,
+                    "error": "No daily metrics found in the database for this athlete/date range. If this athlete is non-premium in TrainingPeaks, daily metrics may not be ingested.",
+                    "summary": {
+                        "days_total": days_total,
+                        "days_with_metrics": 0,
+                        "metric_alerts_created": 0,
+                        "recovery_triggered": 0,
+                    },
+                },
+            )
+
+        try:
+            for day in metric_dates:
+                # Baseline snapshots for this day
+                calculate_baselines(int(target_athlete_id), end_date=day)
+
+                # Metric alerts (persisted)
+                created = check_alert_conditions(int(target_athlete_id), check_date=day)
+                metric_alerts_created += len(created or [])
+
+                # Recovery alert evaluation (persisted)
+                recovery = evaluate_recovery_alert(
+                    int(target_athlete_id),
+                    check_date=day,
+                    threshold=recovery_threshold,
+                    send_email=False,
+                )
+                if isinstance(recovery, dict):
+                    if recovery.get("triggered"):
+                        recovery_triggered += 1
+                    upsert_recovery_alert_run(
+                        int(target_athlete_id),
+                        day,
+                        threshold=recovery_threshold,
+                        triggered=bool(recovery.get("triggered")),
+                        reason=str(recovery.get("reason") or ""),
+                        metrics=(recovery.get("metrics") or {}),
+                    )
+
+            resp = templates.TemplateResponse(
+                "partials/alerts_backfill.html",
+                {
+                    "request": request,
+                    "error": None,
+                    "summary": {
+                        "days_total": days_total,
+                        "days_with_metrics": days_with_metrics,
+                        "metric_alerts_created": metric_alerts_created,
+                        "recovery_triggered": recovery_triggered,
+                    },
+                },
+            )
+            resp.headers["HX-Trigger"] = "podiumRefresh"
+            return resp
+        except Exception as e:
+            return templates.TemplateResponse(
+                "partials/alerts_backfill.html",
+                {
+                    "request": request,
+                    "error": f"Backfill failed: {e}",
+                    "summary": {
+                        "days_total": days_total,
+                        "days_with_metrics": days_with_metrics,
+                        "metric_alerts_created": metric_alerts_created,
+                        "recovery_triggered": recovery_triggered,
+                    },
+                },
+            )
+
+    @app.get("/partials/compliance_today", response_class=HTMLResponse)
+    def partial_compliance_today(
+        request: Request,
+        target_athlete_id: int,
+        compliance_date: str | None = None,
+        requester_id: int = Depends(require_login),
+    ):
+        role = request.session.get("role") or "athlete"
+        if not can_access_athlete(requester_id, role, target_athlete_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        day = _parse_date(compliance_date) or get_effective_today()
+        snapshot = compliance_service.get_compliance_for_day(int(target_athlete_id), day) or {}
         records = (snapshot.get("records") or [])
 
         def _classify(record: dict) -> dict:
@@ -457,7 +2472,7 @@ def create_app() -> FastAPI:
             "partials/compliance_today.html",
             {
                 "request": request,
-                "today": today,
+                "today": day,
                 "records": enriched,
                 "buckets": buckets,
                 "total": len(enriched),
@@ -484,6 +2499,23 @@ def create_app() -> FastAPI:
             payload={"days": int(days)},
         )
 
+        return templates.TemplateResponse(
+            "partials/job_enqueued.html",
+            {"request": request, "job_id": int(job.id)},
+        )
+
+    @app.post("/jobs/sync_roster_recent")
+    def sync_roster_recent_job(
+        request: Request,
+        days: int = Form(7),
+        coach_id: int = Depends(require_coach),
+    ):
+        job = enqueue_job(
+            "sync_roster_recent",
+            requested_by_athlete_id=int(coach_id),
+            target_athlete_id=None,
+            payload={"days": int(days)},
+        )
         return templates.TemplateResponse(
             "partials/job_enqueued.html",
             {"request": request, "job_id": int(job.id)},

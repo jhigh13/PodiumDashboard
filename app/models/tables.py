@@ -83,6 +83,23 @@ class EmailLog(Base):
     status = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
+class RecoveryAlertRun(Base):
+    __tablename__ = 'recovery_alert_runs'
+    __table_args__ = (
+        UniqueConstraint('athlete_id', 'alert_date', name='uq_recovery_alert_runs_athlete_date'),
+    )
+
+    id = Column(Integer, primary_key=True)
+    athlete_id = Column(Integer, ForeignKey('athletes.id', ondelete='CASCADE'), index=True)
+    alert_date = Column(Date, index=True)
+    threshold = Column(Float)
+    triggered = Column(Boolean)
+    reason = Column(String)
+    metrics = Column(JSON)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
 class BaselineMetric(Base):
     __tablename__ = 'baseline_metrics'
     id = Column(Integer, primary_key=True)

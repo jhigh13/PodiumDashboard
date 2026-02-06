@@ -11,10 +11,10 @@
 
   <div class="kpi-row">
     <div class="kpi"><div class="circle" style="background:#f3f4f6; color:#111827;">{{ total }}</div><div class="label">Workouts</div></div>
-    <div class="kpi"><div class="circle" style="background:#133a2a; color:#9ff3c7;">{{ buckets.good }}</div><div class="label">Good</div></div>
-    <div class="kpi"><div class="circle" style="background:#3a2d13; color:#ffe7a3;">{{ buckets.ok }}</div><div class="label">Ok</div></div>
-    <div class="kpi"><div class="circle" style="background:#3a1717; color:#ffb3b3;">{{ buckets.bad }}</div><div class="label">Bad</div></div>
-    <div class="kpi"><div class="circle" style="background:#1c233f; color:#c4cbe3;">{{ buckets.missed }}</div><div class="label">Missed</div></div>
+    <div class="kpi"><div class="circle" style="background:#166534; color:#9ff3c7;">{{ buckets.good }}</div><div class="label">Good</div></div>
+    <div class="kpi"><div class="circle" style="background:#ffedd5; color:#92400e;">{{ buckets.ok }}</div><div class="label">Ok</div></div>
+    <div class="kpi"><div class="circle" style="background:#fee2e2; color:#7f1d1d;">{{ buckets.bad }}</div><div class="label">Bad</div></div>
+    <div class="kpi"><div class="circle" style="background:#f1f5f9; color:#334155;">{{ buckets.missed }}</div><div class="label">Missed</div></div>
   </div>
 
   <div class="divider"></div>
@@ -31,8 +31,7 @@
       <div class="card" style="margin: 12px 0 0 0;">
         <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
           <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-            <div style="font-weight:900;">{{ r.workout_date }}</div>
-            <div class="badge gray">{{ sport | title }}</div>
+            <div style="font-weight:900;">{{ sport | title }}</div>
             <div class="badge {{ cls.badge_class }}">{{ cls.badge }}</div>
           </div>
           <div class="muted">
@@ -43,6 +42,10 @@
             {% endif %}
           </div>
         </div>
+
+        {% if r.workout_title %}
+          <div class="muted" style="margin-top:6px; font-size:13px;">{{ r.workout_title }}</div>
+        {% endif %}
 
         {% set show_metrics = [] %}
         {% for m in metrics %}

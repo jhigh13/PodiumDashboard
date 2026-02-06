@@ -1,0 +1,69 @@
+{% if not debug %}
+  <div class="muted">No debug info.</div>
+{% else %}
+  <div class="card" style="margin-top:10px;">
+    <h4 style="margin-top:0;">TrainingPeaks Debug</h4>
+
+    <div class="muted">Athlete: {{ debug.get('athlete_name') }} (db_id={{ debug.get('athlete_id') }}, tp_id={{ debug.get('tp_athlete_id') }})</div>
+    <div class="muted">Range: {{ debug.get('range') }}</div>
+    <div class="muted">Token: {% if debug.get('has_athlete_token') %}athlete token{% else %}coach token fallback{% endif %} (coach_token_present={{ debug.get('has_coach_token') }})</div>
+
+    <div class="divider"></div>
+
+    <div>
+      <strong>Workouts endpoint</strong>
+      <div class="muted">URL: {{ debug.get('workouts', {}).get('url') }}</div>
+      <div class="muted">HTTP: {{ debug.get('workouts', {}).get('status') }}</div>
+      {% if debug.get('workouts', {}).get('count') is not none %}
+        <div class="muted">Items: {{ debug.get('workouts', {}).get('count') }}</div>
+      {% endif %}
+      {% if debug.get('workouts', {}).get('error') %}
+        <div class="muted">Error: {{ debug.get('workouts', {}).get('error') }}</div>
+      {% endif %}
+      {% if debug.get('workouts', {}).get('body_snippet') %}
+        <pre style="white-space:pre-wrap; overflow:auto; max-height:160px;">{{ debug.get('workouts', {}).get('body_snippet') }}</pre>
+      {% endif %}
+    </div>
+
+    <div class="divider"></div>
+
+    <div>
+      <strong>Metrics endpoint</strong>
+      <div class="muted">URL: {{ debug.get('metrics', {}).get('url') }}</div>
+      <div class="muted">HTTP: {{ debug.get('metrics', {}).get('status') }}</div>
+      {% if debug.get('metrics', {}).get('count') is not none %}
+        <div class="muted">Items: {{ debug.get('metrics', {}).get('count') }}</div>
+      {% endif %}
+      {% if debug.get('metrics', {}).get('error') %}
+        <div class="muted">Error: {{ debug.get('metrics', {}).get('error') }}</div>
+      {% endif %}
+      {% if debug.get('metrics', {}).get('body_snippet') %}
+        <pre style="white-space:pre-wrap; overflow:auto; max-height:160px;">{{ debug.get('metrics', {}).get('body_snippet') }}</pre>
+      {% endif %}
+    </div>
+
+    {% if debug.get('metrics_self') %}
+      <div class="divider"></div>
+
+      <div>
+        <strong>Metrics (token-owner) endpoint</strong>
+        <div class="muted">URL: {{ debug.get('metrics_self', {}).get('url') }}</div>
+        <div class="muted">HTTP: {{ debug.get('metrics_self', {}).get('status') }}</div>
+        {% if debug.get('metrics_self', {}).get('count') is not none %}
+          <div class="muted">Items: {{ debug.get('metrics_self', {}).get('count') }}</div>
+        {% endif %}
+        {% if debug.get('metrics_self', {}).get('error') %}
+          <div class="muted">Error: {{ debug.get('metrics_self', {}).get('error') }}</div>
+        {% endif %}
+        {% if debug.get('metrics_self', {}).get('body_snippet') %}
+          <pre style="white-space:pre-wrap; overflow:auto; max-height:160px;">{{ debug.get('metrics_self', {}).get('body_snippet') }}</pre>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {% if debug.get('note') %}
+      <div class="divider"></div>
+      <div class="muted">{{ debug.get('note') }}</div>
+    {% endif %}
+  </div>
+{% endif %}
