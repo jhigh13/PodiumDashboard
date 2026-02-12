@@ -1,0 +1,13 @@
+<select id="prediction_prog_id" name="prog_id"
+        hx-get="/partials/prediction_start_list"
+        hx-trigger="change"
+        hx-target="#start-list-panel"
+        hx-swap="innerHTML"
+        hx-include="#prediction_event_id">
+  <option value="">-- Select Program --</option>
+  {% for p in programs %}
+    <option value="{{ p.prog_id }}">
+      {{ p.prog_name }}{% if p.prog_distance_category %} ({{ p.prog_distance_category }}){% endif %}
+    </option>
+  {% endfor %}
+</select>

@@ -1,0 +1,16 @@
+<select id="prediction_event_id" name="event_id"
+        hx-get="/partials/prediction_programs"
+        hx-trigger="change"
+        hx-target="#prediction-program-select-container"
+        hx-swap="innerHTML"
+        hx-include="this">
+  <option value="">-- Select Event --</option>
+  {% for ev in events %}
+    <option value="{{ ev.event_id }}">
+      {{ ev.event_name }} ({{ ev.event_date }}) &mdash; {{ ev.event_venue }}, {{ ev.event_country }}
+    </option>
+  {% endfor %}
+</select>
+{% if not events %}
+  <div class="muted" style="margin-top:4px;">No upcoming events with start lists found.</div>
+{% endif %}

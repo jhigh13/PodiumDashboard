@@ -1,0 +1,76 @@
+{% if result.error %}
+  <div class="muted" style="color:#dc2626;">Error: {{ result.error }}</div>
+{% else %}
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:12px;">
+    <div>
+      <h4 style="margin:0;">
+        {{ result.event_meta.prog_name }} &mdash; {{ result.event_meta.event_name }}
+      </h4>
+      <div class="muted">
+        {{ result.event_meta.event_date }}
+        | {{ result.event_meta.event_venue }}, {{ result.event_meta.event_country }}
+        | {{ result.n_athletes }} athletes
+        | {{ result.n_sims | default(10000) }} simulations
+      </div>
+    </div>
+
+    <form
+      style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;"
+      hx-post="/partials/prediction_resimulate"
+      hx-target="#prediction-results"
+      hx-swap="innerHTML"
+      hx-indicator="#resim-spinner"
+    >
+      <input type="hidden" name="event_id" value="{{ event_id }}" />
+      <input type="hidden" name="prog_id" value="{{ prog_id }}" />
+      <div>
+        <div class="muted" style="font-size:12px;">Breakaway Bias</div>
+        <input type="range" name="breakaway_bias" min="-3" max="3" step="0.5"
+               value="{{ result.breakaway_bias }}" style="width:100px;"
+               oninput="this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)" />
+        <span class="muted" style="font-size:12px;">{{ result.breakaway_bias }}</span>
+      </div>
+      <div>
+        <div class="muted" style="font-size:12px;">Form Share</div>
+        <input type="range" name="form_share" min="0" max="0.5" step="0.05"
+               value="{{ result.form_share }}" style="width:100px;"
+               oninput="this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)" />
+        <span class="muted" style="font-size:12px;">{{ result.form_share }}</span>
+      </div>
+      <button class="btn secondary" type="submit">Re-simulate</button>
+      <span id="resim-spinner" class="htmx-indicator muted">Running...</span>
+    </form>
+  </div>
+
+  {% if result.display_df is not none %}
+    <div style="overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            {% for col in result.display_df.columns %}
+              <th style="white-space:nowrap;">{{ col }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for _, row in result.display_df.iterrows() %}
+            <tr>
+              {% for col in result.display_df.columns %}
+                <td style="white-space:nowrap;">
+                  {% set val = row[col] %}
+                  {% if val is none or val != val %}
+                    -
+                  {% elif ('Win' in col or 'Podium' in col) and val is number and val > 10 %}
+                    <strong>{{ val }}</strong>
+                  {% else %}
+                    {{ val }}
+                  {% endif %}
+                </td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+{% endif %}

@@ -1,0 +1,149 @@
+<div style="margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+  <div>
+    <strong>Start List</strong>
+    <span class="muted" id="start-list-count">({{ athletes|length }} athletes)</span>
+  </div>
+  <div style="position:relative; min-width:240px;">
+    <input
+      type="text"
+      id="athlete-search-input"
+      placeholder="Search athlete to add..."
+      autocomplete="off"
+      style="width:100%;"
+      hx-get="/partials/prediction_athlete_search"
+      hx-trigger="keyup changed delay:300ms"
+      hx-target="#athlete-search-dropdown"
+      hx-swap="innerHTML"
+      hx-params="*"
+      name="q"
+    />
+    <div id="athlete-search-dropdown"
+         style="position:absolute; top:100%; left:0; right:0; z-index:100; background:var(--card); border:1px solid var(--border); border-radius:8px; max-height:240px; overflow-y:auto; display:none;">
+    </div>
+  </div>
+</div>
+
+<div id="prediction-athlete-ids">
+  {% for a in athletes %}
+    <input type="hidden" name="athlete_ids" value="{{ a.athlete_id }}" />
+  {% endfor %}
+</div>
+
+<div id="start-list-table" style="max-height:400px; overflow-y:auto;">
+  <table>
+    <thead>
+      <tr>
+        <th style="width:40px;">#</th>
+        <th>Athlete</th>
+        <th>Country</th>
+        <th style="width:50px;"></th>
+      </tr>
+    </thead>
+    <tbody id="start-list-body">
+      {% for a in athletes %}
+        <tr id="athlete-row-{{ a.athlete_id }}" data-athlete-id="{{ a.athlete_id }}">
+          <td class="muted" style="font-size:12px;">{{ loop.index }}</td>
+          <td>{{ a.athlete_full_name }}</td>
+          <td class="muted">{{ a.athlete_country_name or '-' }}</td>
+          <td>
+            <button type="button" class="btn secondary" style="padding:2px 8px; font-size:12px;"
+                    onclick="removeAthlete(this, {{ a.athlete_id }})">X</button>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if not athletes %}
+  <div class="muted" style="margin-top:8px;">No athletes found in start list.</div>
+{% endif %}
+
+<script>
+(function() {
+  // Show/hide dropdown when search input has content
+  var searchInput = document.getElementById('athlete-search-input');
+  var dropdown = document.getElementById('athlete-search-dropdown');
+
+  if (searchInput) {
+    searchInput.addEventListener('input', function() {
+      dropdown.style.display = this.value.trim().length >= 2 ? 'block' : 'none';
+    });
+    searchInput.addEventListener('blur', function() {
+      // Delay hide so click on dropdown can fire first
+      setTimeout(function() { dropdown.style.display = 'none'; }, 200);
+    });
+    searchInput.addEventListener('focus', function() {
+      if (this.value.trim().length >= 2 && dropdown.innerHTML.trim()) {
+        dropdown.style.display = 'block';
+      }
+    });
+  }
+
+  // Attach exclude param: send current athlete IDs with each search request
+  document.body.addEventListener('htmx:configRequest', function(evt) {
+    if (evt.detail.path && evt.detail.path.includes('prediction_athlete_search')) {
+      var ids = [];
+      document.querySelectorAll('#prediction-athlete-ids input[name="athlete_ids"]').forEach(function(inp) {
+        ids.push(inp.value);
+      });
+      evt.detail.parameters['exclude'] = ids.join(',');
+    }
+  });
+})();
+
+function removeAthlete(btn, athleteId) {
+  // Remove row
+  var row = document.getElementById('athlete-row-' + athleteId);
+  if (row) row.remove();
+  // Remove hidden input
+  var inputs = document.querySelectorAll('#prediction-athlete-ids input[name="athlete_ids"]');
+  inputs.forEach(function(inp) {
+    if (parseInt(inp.value) === athleteId) inp.remove();
+  });
+  updateStartListCount();
+}
+
+function addAthleteToStartList(athleteId, name, country) {
+  // Check if already present
+  var existing = document.querySelector('#athlete-row-' + athleteId);
+  if (existing) return;
+
+  // Add hidden input
+  var container = document.getElementById('prediction-athlete-ids');
+  var input = document.createElement('input');
+  input.type = 'hidden';
+  input.name = 'athlete_ids';
+  input.value = athleteId;
+  container.appendChild(input);
+
+  // Add table row with highlight
+  var tbody = document.getElementById('start-list-body');
+  var rowCount = tbody.querySelectorAll('tr').length + 1;
+  var tr = document.createElement('tr');
+  tr.id = 'athlete-row-' + athleteId;
+  tr.setAttribute('data-athlete-id', athleteId);
+  tr.style.background = 'rgba(37,99,235,0.06)';
+  tr.innerHTML =
+    '<td class="muted" style="font-size:12px;">' + rowCount + '</td>' +
+    '<td>' + name + '</td>' +
+    '<td class="muted">' + (country || '-') + '</td>' +
+    '<td><button type="button" class="btn secondary" style="padding:2px 8px; font-size:12px;" ' +
+    'onclick="removeAthlete(this, ' + athleteId + ')">X</button></td>';
+  tbody.appendChild(tr);
+
+  // Clear search
+  var searchInput = document.getElementById('athlete-search-input');
+  if (searchInput) searchInput.value = '';
+  var dropdown = document.getElementById('athlete-search-dropdown');
+  if (dropdown) { dropdown.innerHTML = ''; dropdown.style.display = 'none'; }
+
+  updateStartListCount();
+}
+
+function updateStartListCount() {
+  var count = document.querySelectorAll('#prediction-athlete-ids input[name="athlete_ids"]').length;
+  var span = document.getElementById('start-list-count');
+  if (span) span.textContent = '(' + count + ' athletes)';
+}
+</script>

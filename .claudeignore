@@ -1,0 +1,33 @@
+# Virtual environment
+.venv/
+venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Test caches
+.pytest_cache/
+htmlcov/
+.coverage
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Workout data files (large binary/CSV data)
+workout_files/
+workout_timeseries/
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Logs
+*.log

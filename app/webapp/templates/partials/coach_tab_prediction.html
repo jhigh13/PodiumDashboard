@@ -1,0 +1,84 @@
+<div class="card">
+  <h4 style="margin-top:0;">Race Prediction</h4>
+  <div class="muted" style="margin-bottom:12px;">
+    Select an upcoming event and program to generate Monte Carlo race predictions.
+  </div>
+
+  <form id="prediction-controls" style="display:flex; gap:12px; flex-wrap:wrap; align-items:end;">
+    <!-- Event dropdown (loaded via HTMX) -->
+    <div>
+      <div class="muted">Event</div>
+      <div
+        id="prediction-event-select-container"
+        hx-get="/partials/prediction_events"
+        hx-trigger="load"
+        hx-target="this"
+        hx-swap="innerHTML"
+      >
+        <select disabled><option>Loading events...</option></select>
+      </div>
+    </div>
+
+    <!-- Program dropdown (populated when event selected) -->
+    <div>
+      <div class="muted">Program</div>
+      <div id="prediction-program-select-container">
+        <select id="prediction_prog_id" name="prog_id" disabled>
+          <option value="">Select event first</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Breakaway Bias slider -->
+    <div>
+      <div class="muted">Breakaway Bias</div>
+      <input type="range" name="breakaway_bias" min="-3" max="3" step="0.5" value="0"
+             id="breakaway_bias" style="width:120px;" />
+      <span id="bb-val" class="muted" style="font-size:12px;">0.0</span>
+    </div>
+
+    <!-- Form Share slider -->
+    <div>
+      <div class="muted">Form Share</div>
+      <input type="range" name="form_share" min="0" max="0.5" step="0.05" value="0.2"
+             id="form_share" style="width:120px;" />
+      <span id="fs-val" class="muted" style="font-size:12px;">0.20</span>
+    </div>
+
+    <button
+      class="btn"
+      type="button"
+      id="btn-simulate"
+      hx-post="/partials/prediction_simulate"
+      hx-include="#prediction-controls, #prediction-athlete-ids"
+      hx-target="#prediction-results"
+      hx-swap="innerHTML"
+      hx-indicator="#prediction-spinner"
+    >Simulate</button>
+  </form>
+
+  <div id="prediction-spinner" class="htmx-indicator muted" style="margin-top:8px;">
+    Running simulation (this may take 30-60 seconds)...
+  </div>
+</div>
+
+<div id="start-list-panel" class="card" style="min-height:40px;">
+  <div class="muted">Select an event and program to load the start list.</div>
+</div>
+
+<div id="prediction-results" class="card" style="min-height: 100px;">
+  <div class="muted">Select an event and program, then click Simulate to generate predictions.</div>
+</div>
+
+<script>
+(function() {
+  var bb = document.getElementById('breakaway_bias');
+  var fs = document.getElementById('form_share');
+  if (bb) bb.addEventListener('input', function() {
+    document.getElementById('bb-val').textContent = parseFloat(bb.value).toFixed(1);
+  });
+  if (fs) fs.addEventListener('input', function() {
+    document.getElementById('fs-val').textContent = parseFloat(fs.value).toFixed(2);
+  });
+})();
+</script>

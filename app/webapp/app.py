@@ -2012,6 +2012,8 @@ def create_app() -> FastAPI:
             template = "partials/coach_tab_recovery.html"
         elif tab_norm in {"race", "races", "performance", "race_performance"}:
             template = "partials/coach_tab_race.html"
+        elif tab_norm in {"prediction", "predictions", "predict"}:
+            template = "partials/coach_tab_prediction.html"
         else:
             raise HTTPException(status_code=400, detail="Invalid tab")
 
@@ -2519,6 +2521,140 @@ def create_app() -> FastAPI:
         return templates.TemplateResponse(
             "partials/job_enqueued.html",
             {"request": request, "job_id": int(job.id)},
+        )
+
+    # ── Prediction Tab ──
+
+    @app.get("/partials/prediction_events", response_class=HTMLResponse)
+    def partial_prediction_events(request: Request, _: int = Depends(require_coach)):
+        """Return dropdown options for upcoming events with start lists."""
+        from app.services.prediction import fetch_upcoming_events
+
+        tri_engine = get_triathlon_engine()
+        if tri_engine is None:
+            return "<div class='muted'>Triathlon database not configured.</div>"
+        events = fetch_upcoming_events(tri_engine)
+        return templates.TemplateResponse(
+            "partials/prediction_events.html",
+            {"request": request, "events": events},
+        )
+
+    @app.get("/partials/prediction_programs", response_class=HTMLResponse)
+    def partial_prediction_programs(
+        request: Request,
+        event_id: int,
+        _: int = Depends(require_coach),
+    ):
+        """Return program options for a selected event."""
+        from app.services.prediction import fetch_event_programs
+
+        tri_engine = get_triathlon_engine()
+        if tri_engine is None:
+            return "<div class='muted'>Triathlon database not configured.</div>"
+        programs = fetch_event_programs(tri_engine, event_id)
+        return templates.TemplateResponse(
+            "partials/prediction_programs.html",
+            {"request": request, "programs": programs},
+        )
+
+    @app.get("/partials/prediction_start_list", response_class=HTMLResponse)
+    def partial_prediction_start_list(
+        request: Request,
+        event_id: int,
+        prog_id: int,
+        _: int = Depends(require_coach),
+    ):
+        """Load the start list for a selected event + program."""
+        from app.services.prediction import fetch_start_list_for_program
+
+        athletes = fetch_start_list_for_program(event_id, prog_id)
+        return templates.TemplateResponse(
+            "partials/prediction_start_list.html",
+            {"request": request, "athletes": athletes, "event_id": event_id, "prog_id": prog_id},
+        )
+
+    @app.get("/partials/prediction_athlete_search", response_class=HTMLResponse)
+    def partial_prediction_athlete_search(
+        request: Request,
+        q: str = "",
+        exclude: str = "",
+        _: int = Depends(require_coach),
+    ):
+        """Debounced athlete name search for adding to start list."""
+        from app.services.prediction import search_athletes_in_triathlon_db
+
+        exclude_ids = [int(x) for x in exclude.split(",") if x.strip().isdigit()] if exclude else None
+        results = search_athletes_in_triathlon_db(q, exclude_ids=exclude_ids)
+        return templates.TemplateResponse(
+            "partials/prediction_search_results.html",
+            {"request": request, "results": results},
+        )
+
+    @app.post("/partials/prediction_simulate", response_class=HTMLResponse)
+    async def partial_prediction_simulate(
+        request: Request,
+        event_id: int = Form(...),
+        prog_id: int = Form(...),
+        breakaway_bias: float = Form(0.0),
+        form_share: float = Form(0.2),
+        _: int = Depends(require_coach),
+    ):
+        """Run full prediction pipeline and return results."""
+        from app.services.prediction import run_prediction_pipeline
+
+        # Collect athlete_ids from repeated form fields
+        form_data = await request.form()
+        athlete_ids_raw = form_data.getlist("athlete_ids")
+        athlete_ids = [int(x) for x in athlete_ids_raw if str(x).strip().isdigit()] or None
+
+        result = run_prediction_pipeline(
+            event_id=event_id,
+            prog_id=prog_id,
+            breakaway_bias=breakaway_bias,
+            form_share=form_share,
+            athlete_ids=athlete_ids,
+        )
+        return templates.TemplateResponse(
+            "partials/prediction_results.html",
+            {
+                "request": request,
+                "result": result,
+                "event_id": event_id,
+                "prog_id": prog_id,
+            },
+        )
+
+    @app.post("/partials/prediction_resimulate", response_class=HTMLResponse)
+    async def partial_prediction_resimulate(
+        request: Request,
+        event_id: int = Form(...),
+        prog_id: int = Form(...),
+        breakaway_bias: float = Form(0.0),
+        form_share: float = Form(0.2),
+        _: int = Depends(require_coach),
+    ):
+        """Re-simulate with adjusted parameters (uses cached features)."""
+        from app.services.prediction import resimulate
+
+        form_data = await request.form()
+        athlete_ids_raw = form_data.getlist("athlete_ids")
+        athlete_ids = [int(x) for x in athlete_ids_raw if str(x).strip().isdigit()] or None
+
+        result = resimulate(
+            event_id=event_id,
+            prog_id=prog_id,
+            breakaway_bias=breakaway_bias,
+            form_share=form_share,
+            athlete_ids=athlete_ids,
+        )
+        return templates.TemplateResponse(
+            "partials/prediction_results.html",
+            {
+                "request": request,
+                "result": result,
+                "event_id": event_id,
+                "prog_id": prog_id,
+            },
         )
 
     return app

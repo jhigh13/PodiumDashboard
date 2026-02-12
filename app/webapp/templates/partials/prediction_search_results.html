@@ -1,0 +1,15 @@
+{% if results %}
+  {% for r in results %}
+    <div style="padding:6px 10px; cursor:pointer; font-size:14px; border-bottom:1px solid var(--border);"
+         onmouseover="this.style.background='var(--btn-secondary)'"
+         onmouseout="this.style.background=''"
+         onmousedown="addAthleteToStartList({{ r.athlete_id }}, '{{ r.athlete_full_name|e }}', '{{ (r.athlete_country_name or '')|e }}')">
+      <span>{{ r.athlete_full_name }}</span>
+      {% if r.athlete_country_name %}
+        <span class="muted" style="font-size:12px; margin-left:6px;">{{ r.athlete_country_name }}</span>
+      {% endif %}
+    </div>
+  {% endfor %}
+{% else %}
+  <div style="padding:8px 10px; font-size:13px;" class="muted">No athletes found.</div>
+{% endif %}
