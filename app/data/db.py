@@ -42,9 +42,10 @@ def ensure_schema():
     # Base.metadata.create_all should normally handle this, but some deployments only
     # apply partial DDL; keep this as a safety net.
     try:
-        tables = set(insp.get_table_names())
-        if 'recovery_alert_runs' not in tables:
-            Base.metadata.tables['recovery_alert_runs'].create(bind=engine, checkfirst=True)
+        existing_tables = set(insp.get_table_names())
+        for tbl_name in ('recovery_alert_runs', 'workout_details', 'workout_laps'):
+            if tbl_name not in existing_tables and tbl_name in Base.metadata.tables:
+                Base.metadata.tables[tbl_name].create(bind=engine, checkfirst=True)
     except Exception:
         # Don't hard-fail app startup on schema patching; surface via runtime errors if any.
         pass

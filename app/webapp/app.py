@@ -24,6 +24,8 @@ from app.models.tables import (
     RecoveryAlertRun,
     Workout,
     WorkoutCompliance,
+    WorkoutDetail,
+    WorkoutLap,
     WTODashboardAthleteMap,
     WTORaceResult,
 )
@@ -34,6 +36,13 @@ from app.services.baseline import calculate_baselines, check_alert_conditions, g
 from app.services.tp_api import get_api
 from app.services.tokens import get_token as get_token_row, find_coach_token
 from app.services.race_results import load_local_race_results, pick_best_worst
+from app.services.workout_cache import (
+    fetch_timeseries_cached,
+    normalize_timeseries_rows,
+    extract_workout_summary,
+    extract_lap_summaries,
+    is_timeseries_cached,
+)
 from app.services.recovery_alerts import evaluate_recovery_alert
 from app.services.recovery_alert_runs import list_recovery_alert_runs, upsert_recovery_alert_run
 from app.data.triathlon_db import get_triathlon_engine
@@ -1784,6 +1793,28 @@ def create_app() -> FastAPI:
                     return str(w["workout_id"])
             return None
 
+        default_a = _pick_default(workouts_a)
+        default_b = _pick_default(workouts_b)
+
+        # Auto-cache: pre-fetch timeseries for default race-day workouts in background.
+        # This runs inline (blocking) on the compare endpoint so the trace endpoint
+        # can serve instantly. Only caches if not already cached.
+        import threading
+
+        def _precache_workout(wid: str):
+            if not wid or is_timeseries_cached(wid):
+                return
+            try:
+                fetch_timeseries_cached(api, wid, int(athlete.tp_athlete_id))
+            except Exception:
+                pass  # Non-critical; trace endpoint will retry if needed
+
+        # Fire in background threads to avoid blocking the compare response
+        for wid in (default_a, default_b):
+            if wid and not is_timeseries_cached(wid):
+                t = threading.Thread(target=_precache_workout, args=(wid,), daemon=True)
+                t.start()
+
         return templates.TemplateResponse(
             "partials/race_tp_compare.html",
             {
@@ -1793,32 +1824,113 @@ def create_app() -> FastAPI:
                 "selected_sport": selected_sport,
                 "workouts_a": workouts_a,
                 "workouts_b": workouts_b,
-                "selected_workout_a": _pick_default(workouts_a),
-                "selected_workout_b": _pick_default(workouts_b),
+                "selected_workout_a": default_a,
+                "selected_workout_b": default_b,
             },
         )
 
+    def _persist_workout_summaries(tp_workout_id: str, payload: dict):
+        """Save compact WorkoutStats + LapStats to DB tables (upsert).
+
+        Non-critical helper — caller should catch exceptions.
+        """
+        summary = extract_workout_summary(payload)
+        laps = extract_lap_summaries(payload)
+
+        with get_session() as session:
+            # Find the local Workout row by tp_workout_id
+            workout = session.execute(
+                select(Workout).where(Workout.tp_workout_id == str(tp_workout_id)).limit(1)
+            ).scalars().first()
+            workout_db_id = workout.id if workout else None
+
+            # Upsert WorkoutDetail
+            existing = None
+            if workout_db_id:
+                existing = session.execute(
+                    select(WorkoutDetail).where(WorkoutDetail.workout_id == workout_db_id).limit(1)
+                ).scalars().first()
+
+            if existing:
+                # Update existing row
+                for key, val in summary.items():
+                    if val is not None:
+                        col_name = key  # summary keys match column names
+                        if hasattr(existing, col_name):
+                            setattr(existing, col_name, val)
+                existing.timeseries_cached_at = datetime.now(tz=None)
+            elif workout_db_id:
+                detail = WorkoutDetail(
+                    workout_id=workout_db_id,
+                    tp_workout_id=str(tp_workout_id),
+                    workout_name=summary.get("name"),
+                    elapsed_time_ms=summary.get("elapsed_time_ms"),
+                    tss=summary.get("tss"),
+                    intensity_factor=summary.get("intensity_factor"),
+                    normalized_power=summary.get("normalized_power"),
+                    power_average=summary.get("power_average"),
+                    power_maximum=summary.get("power_maximum"),
+                    hr_average=summary.get("hr_average"),
+                    hr_maximum=summary.get("hr_maximum"),
+                    hr_minimum=summary.get("hr_minimum"),
+                    speed_average=summary.get("speed_average"),
+                    speed_maximum=summary.get("speed_maximum"),
+                    normalized_speed=summary.get("normalized_speed"),
+                    cadence_average=summary.get("cadence_average"),
+                    cadence_maximum=summary.get("cadence_maximum"),
+                    energy_kj=summary.get("energy_kj"),
+                    elevation_gain=summary.get("elevation_gain"),
+                    elevation_loss=summary.get("elevation_loss"),
+                    watts_per_kg=summary.get("watts_per_kg"),
+                    efficiency_factor=summary.get("efficiency_factor"),
+                    power_pulse_decoupling=summary.get("power_pulse_decoupling"),
+                    speed_pulse_decoupling=summary.get("speed_pulse_decoupling"),
+                    vi=summary.get("vi"),
+                    timeseries_cached_at=datetime.now(tz=None),
+                )
+                session.add(detail)
+
+            # Upsert WorkoutLaps
+            if workout_db_id and laps:
+                # Delete existing laps for this workout, then re-insert
+                session.execute(
+                    delete(WorkoutLap).where(WorkoutLap.workout_id == workout_db_id)
+                )
+                for lap_data in laps:
+                    lap = WorkoutLap(
+                        workout_id=workout_db_id,
+                        lap_number=lap_data["lap_number"],
+                        lap_name=lap_data.get("name"),
+                        start_time_ms=lap_data.get("start_time_ms"),
+                        end_time_ms=lap_data.get("end_time_ms"),
+                        elapsed_time_ms=lap_data.get("elapsed_time_ms"),
+                        tss=lap_data.get("tss"),
+                        intensity_factor=lap_data.get("intensity_factor"),
+                        normalized_power=lap_data.get("normalized_power"),
+                        power_average=lap_data.get("power_average"),
+                        power_maximum=lap_data.get("power_maximum"),
+                        hr_average=lap_data.get("hr_average"),
+                        hr_maximum=lap_data.get("hr_maximum"),
+                        hr_minimum=lap_data.get("hr_minimum"),
+                        speed_average=lap_data.get("speed_average"),
+                        speed_maximum=lap_data.get("speed_maximum"),
+                        cadence_average=lap_data.get("cadence_average"),
+                        energy_kj=lap_data.get("energy_kj"),
+                        elevation_gain=lap_data.get("elevation_gain"),
+                        watts_per_kg=lap_data.get("watts_per_kg"),
+                    )
+                    session.add(lap)
+
+            session.commit()
+
     def _extract_channels_payload(payload: dict) -> tuple[list[str], list[list[object]]]:
-        wc = payload.get("WorkoutChannels") or {}
-        channels_raw = wc.get("Channels") or []
-        data = wc.get("Data") or []
+        """Normalize TP timeseries into (channels, rows) handling both formats.
 
-        channels: list[str] = []
-        for c in channels_raw:
-            if isinstance(c, str):
-                channels.append(c)
-            elif isinstance(c, dict):
-                name = c.get("Name") or c.get("name") or c.get("Channel") or c.get("channel")
-                channels.append(str(name or ""))
-            else:
-                channels.append(str(c))
-
-        rows: list[list[object]] = []
-        if isinstance(data, list):
-            for r in data:
-                if isinstance(r, list):
-                    rows.append(r)
-        return channels, rows
+        Standard TP API returns Data as dicts: {Event, MillisecondOffset, Values: [...]}
+        Legacy/other format may return flat list rows.
+        Uses the shared normalize_timeseries_rows() from workout_cache.
+        """
+        return normalize_timeseries_rows(payload)
 
     def _find_channel_index(channels: list[str], candidates: set[str]) -> int | None:
         if not channels:
@@ -1867,14 +1979,32 @@ def create_app() -> FastAPI:
             )
 
         api = get_api(int(target_athlete_id))
+        tp_aid = int(athlete.tp_athlete_id)
+        cache_note_parts: list[str] = []
         try:
-            data_a = api.fetch_workout_time_series(wid_a, tp_athlete_id=int(athlete.tp_athlete_id))
-            data_b = api.fetch_workout_time_series(wid_b, tp_athlete_id=int(athlete.tp_athlete_id))
+            # Cache-through: check disk cache first, fetch from API only on miss
+            a_cached = is_timeseries_cached(wid_a)
+            b_cached = is_timeseries_cached(wid_b)
+            data_a = fetch_timeseries_cached(api, wid_a, tp_aid)
+            data_b = fetch_timeseries_cached(api, wid_b, tp_aid)
+            if a_cached and b_cached:
+                cache_note_parts.append("Both workouts loaded from cache (instant).")
+            elif a_cached or b_cached:
+                cache_note_parts.append("One workout loaded from cache; other fetched from TP API and cached.")
+            else:
+                cache_note_parts.append("Both workouts fetched from TP API and cached for next time.")
         except Exception as e:  # noqa: BLE001
             return templates.TemplateResponse(
                 "partials/race_tp_traces.html",
                 {"request": request, "error": str(e), "fig_json": None, "title": "", "notes": None},
             )
+
+        # Persist compact summaries to DB (fire-and-forget, don't block render)
+        try:
+            _persist_workout_summaries(wid_a, data_a)
+            _persist_workout_summaries(wid_b, data_b)
+        except Exception:  # noqa: BLE001
+            pass  # Non-critical; summaries are a bonus
 
         def _series(payload: dict) -> dict:
             channels, rows = _extract_channels_payload(payload)
@@ -1882,10 +2012,16 @@ def create_app() -> FastAPI:
             if n == 0:
                 return {"x_min": [], "speed": [], "hr": [], "power": []}
 
-            idx_time = _find_channel_index(channels, {"time", "seconds", "sec", "elapsedtime", "elapsedseconds"})
+            idx_time = _find_channel_index(channels, {"millisecondoffset", "time", "seconds", "sec", "elapsedtime", "elapsedseconds"})
             idx_speed = _find_channel_index(channels, {"speed", "velocity", "vel"})
             idx_hr = _find_channel_index(channels, {"heartrate", "hr"})
             idx_power = _find_channel_index(channels, {"power", "watts", "w"})
+
+            # Detect if time channel is in milliseconds (MillisecondOffset) vs seconds
+            time_is_ms = False
+            if idx_time is not None:
+                ch_name = (channels[idx_time] or "").strip().lower().replace(" ", "")
+                time_is_ms = "millisecond" in ch_name
 
             max_points = 1400
             stride = max(1, int(math.ceil(n / max_points)))
@@ -1900,7 +2036,8 @@ def create_app() -> FastAPI:
                 t_sec: float
                 if idx_time is not None and idx_time < len(r):
                     try:
-                        t_sec = float(r[idx_time])
+                        raw_t = float(r[idx_time])
+                        t_sec = raw_t / 1000.0 if time_is_ms else raw_t
                     except Exception:
                         t_sec = float(i)
                 else:
@@ -1989,6 +2126,9 @@ def create_app() -> FastAPI:
             legend=dict(orientation="h"),
         )
 
+        # Combine cache info with any sport-specific notes
+        all_notes = " ".join([n for n in (cache_note_parts[0] if cache_note_parts else None, notes) if n])
+
         fig_json = fig.to_json() if fig.data else None
         return templates.TemplateResponse(
             "partials/race_tp_traces.html",
@@ -1997,7 +2137,7 @@ def create_app() -> FastAPI:
                 "error": None,
                 "fig_json": fig_json,
                 "title": title,
-                "notes": notes,
+                "notes": all_notes or None,
             },
         )
 

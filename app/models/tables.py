@@ -223,6 +223,86 @@ class CoachRosterMember(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class WorkoutDetail(Base):
+    """Compact workout summary stats extracted from TP timeseries WorkoutStats.
+
+    One row per workout. Populated when timeseries is fetched and cached.
+    Avoids storing the full multi-MB timeseries JSON in Postgres.
+    """
+    __tablename__ = 'workout_details'
+    __table_args__ = (
+        UniqueConstraint('workout_id', name='uq_workout_detail_workout'),
+    )
+
+    id = Column(Integer, primary_key=True)
+    workout_id = Column(Integer, ForeignKey('workouts.id', ondelete='CASCADE'), index=True, nullable=False)
+    tp_workout_id = Column(String, index=True)
+
+    # Summary stats from WorkoutStats
+    workout_name = Column(String)
+    elapsed_time_ms = Column(Integer)
+    tss = Column(Float)
+    intensity_factor = Column(Float)
+    normalized_power = Column(Float)
+    power_average = Column(Float)
+    power_maximum = Column(Float)
+    hr_average = Column(Float)
+    hr_maximum = Column(Float)
+    hr_minimum = Column(Float)
+    speed_average = Column(Float)
+    speed_maximum = Column(Float)
+    normalized_speed = Column(Float)
+    cadence_average = Column(Float)
+    cadence_maximum = Column(Float)
+    energy_kj = Column(Float)
+    elevation_gain = Column(Float)
+    elevation_loss = Column(Float)
+    watts_per_kg = Column(Float)
+    efficiency_factor = Column(Float)
+    power_pulse_decoupling = Column(Float)
+    speed_pulse_decoupling = Column(Float)
+    vi = Column(Float)
+
+    # Cache tracking
+    timeseries_cached_at = Column(DateTime(timezone=True))
+    fit_cached_at = Column(DateTime(timezone=True))
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class WorkoutLap(Base):
+    """Per-lap statistics from TP timeseries LapStats."""
+    __tablename__ = 'workout_laps'
+    __table_args__ = (
+        UniqueConstraint('workout_id', 'lap_number', name='uq_workout_lap'),
+    )
+
+    id = Column(Integer, primary_key=True)
+    workout_id = Column(Integer, ForeignKey('workouts.id', ondelete='CASCADE'), index=True, nullable=False)
+    lap_number = Column(Integer, nullable=False)
+    lap_name = Column(String)
+    start_time_ms = Column(Integer)
+    end_time_ms = Column(Integer)
+    elapsed_time_ms = Column(Integer)
+    tss = Column(Float)
+    intensity_factor = Column(Float)
+    normalized_power = Column(Float)
+    power_average = Column(Float)
+    power_maximum = Column(Float)
+    hr_average = Column(Float)
+    hr_maximum = Column(Float)
+    hr_minimum = Column(Float)
+    speed_average = Column(Float)
+    speed_maximum = Column(Float)
+    cadence_average = Column(Float)
+    energy_kj = Column(Float)
+    elevation_gain = Column(Float)
+    watts_per_kg = Column(Float)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class Job(Base):
     __tablename__ = 'jobs'
 

@@ -233,6 +233,7 @@ def run_prediction_pipeline(
         breakaway_bias=breakaway_bias,
         form_share=form_share,
         distance_category=distance_cat,
+        bundle_metadata=bundle.metadata,
     )
 
     display_df = format_simulation_output(sim_df)
@@ -299,6 +300,7 @@ def resimulate(
         breakaway_bias=breakaway_bias,
         form_share=form_share,
         distance_category=distance_cat,
+        bundle_metadata=bundle.metadata,
     )
 
     display_df = format_simulation_output(sim_df)
