@@ -15,6 +15,7 @@ API_BASE_PROD = "https://api.trainingpeaks.com"
 
 # In-process caches to avoid repeatedly calling premium/forbidden endpoints.
 _NON_PREMIUM_METRICS_TP_IDS: set[int] = set()
+_NON_PREMIUM_DETAILS_TP_IDS: set[int] = set()
 _METRICS_PREMIUM_WARNED_TP_IDS: set[int] = set()
 
 class TrainingPeaksAPI:
@@ -57,7 +58,7 @@ class TrainingPeaksAPI:
         return {
             "Authorization": f"Bearer {self._get_access_token()}",
             "Accept": "application/json",
-            "User-Agent": "podium-dashboard/0.1"
+            "User-Agent": settings.tp_user_agent,
         }
 
     def fetch_workouts(self, start_date: date, end_date: date, tp_athlete_id: int | None = None):
@@ -395,6 +396,13 @@ class TrainingPeaksAPI:
         if not workout_id:
             raise ValueError("workout_id is required")
         
+        # Skip early if athlete is known non-premium (details is premium-only)
+        if tp_athlete_id and int(tp_athlete_id) in _NON_PREMIUM_DETAILS_TP_IDS:
+            raise RuntimeError(
+                f"Workout details unavailable for athlete {tp_athlete_id} (non-premium account). "
+                f"The workouts:details endpoint requires a premium TrainingPeaks subscription."
+            )
+        
         # Use production API — sandbox doesn't have uploaded workout files
         base = API_BASE_PROD
         # Build URL - use athlete-scoped endpoint if tp_athlete_id provided
@@ -474,7 +482,14 @@ class TrainingPeaksAPI:
             raise RuntimeError(f"Workout {workout_id} not found or no details available")
         
         if r.status_code == 403:
-            raise RuntimeError(f"Access denied for workout {workout_id}. Ensure token has workouts:details scope")
+            response_text = (r.text or "").lower()
+            if "premium" in response_text and tp_athlete_id:
+                _NON_PREMIUM_DETAILS_TP_IDS.add(int(tp_athlete_id))
+                raise RuntimeError(
+                    f"Workout details unavailable for athlete {tp_athlete_id} (non-premium account). "
+                    f"The workouts:details endpoint requires a premium TrainingPeaks subscription."
+                )
+            raise RuntimeError(f"Access denied for workout {workout_id}. Ensure token has workouts:details scope.")
         
         r.raise_for_status()
         

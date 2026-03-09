@@ -66,6 +66,7 @@ def fetch_token(code: str, scope: str | list[str] | None = None, redirect_uri: s
     headers = {
         "Content-Type": "application/x-www-form-urlencoded",
         "Accept": "application/json",
+        "User-Agent": settings.tp_user_agent,
     }
     
     try:
@@ -109,7 +110,8 @@ def refresh_token(refresh_token: str):
     }
     headers = {
         "Content-Type": "application/x-www-form-urlencoded",
-        "Accept": "application/json"
+        "Accept": "application/json",
+        "User-Agent": settings.tp_user_agent,
     }
     
     try:

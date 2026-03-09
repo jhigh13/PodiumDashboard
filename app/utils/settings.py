@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # Web app redirect URI (FastAPI). Keep Streamlit redirect separate.
     tp_web_redirect_uri: str = Field("http://localhost:8000/oauth/callback", alias="TP_WEB_REDIRECT_URI")
     tp_scope: str = Field("athlete:profile metrics:read workouts:read workouts:details", alias="TP_SCOPE")
+    tp_user_agent: str = Field("PodiumDashboard/1.0", alias="TP_USER_AGENT")
     # Never hardcode secrets in source control. Require via environment.
     database_url: str = Field("", alias="DATABASE_URL")
     resend_api_key: str = Field("", alias="RESEND_API_KEY")
