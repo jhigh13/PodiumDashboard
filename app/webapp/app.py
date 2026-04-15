@@ -52,6 +52,10 @@ from app.scheduling.scheduler import start_scheduler, stop_scheduler
 
 
 templates = Jinja2Templates(directory="app/webapp/templates")
+# Disable Jinja2 LRU cache to avoid "unhashable type: dict" errors when
+# Starlette passes request context through the template cache key path.
+templates.env.auto_reload = True
+templates.env.cache = None
 
 
 COACH_SCOPES = [
