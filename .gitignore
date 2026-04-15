@@ -2,7 +2,9 @@
 .env
 app/.env
 *.env
-app\utils\settings.py
+
+# Cached data files
+data/timeseries_cache/
 
 # Python
 __pycache__/
