@@ -7,11 +7,6 @@ from app.auth.oauth import refresh_token as oauth_refresh
 
 API_BASE = settings.tp_api_base.rstrip('/')
 
-# Production API base for endpoints that require real uploaded workout data
-# (timeseries details, FIT file downloads). Sandbox doesn't auto-upload device
-# files, so these endpoints return 404/empty there.
-API_BASE_PROD = "https://api.trainingpeaks.com"
-
 
 # In-process caches to avoid repeatedly calling premium/forbidden endpoints.
 _NON_PREMIUM_METRICS_TP_IDS: set[int] = set()
@@ -257,13 +252,11 @@ class TrainingPeaksAPI:
         if not workout_id:
             return []
         
-        # Use production API — sandbox doesn't have uploaded workout files
-        base = API_BASE_PROD
         # Use athlete-scoped endpoint if tp_athlete_id provided
         if tp_athlete_id and self._using_coach_token:
-            url = f"{base}/v2/workouts/{tp_athlete_id}/wod/file/{workout_id}/"
+            url = f"{API_BASE}/v2/workouts/{tp_athlete_id}/wod/file/{workout_id}/"
         else:
-            url = f"{base}/v2/workouts/wod/file/{workout_id}/"
+            url = f"{API_BASE}/v2/workouts/wod/file/{workout_id}/"
         
         # Make HEAD request to check available formats
         r = requests.head(url, headers=self._headers(), timeout=10)
@@ -307,14 +300,12 @@ class TrainingPeaksAPI:
         if file_format not in valid_formats:
             raise ValueError(f"Invalid format '{file_format}'. Must be one of: {', '.join(valid_formats)}")
         
-        # Use production API — sandbox doesn't have uploaded workout files
-        base = API_BASE_PROD
         # Build URL - use athlete-scoped endpoint if tp_athlete_id provided
         if tp_athlete_id and self._using_coach_token:
-            url = f"{base}/v2/workouts/{tp_athlete_id}/wod/file/{workout_id}/?format={file_format}"
+            url = f"{API_BASE}/v2/workouts/{tp_athlete_id}/wod/file/{workout_id}/?format={file_format}"
         else:
             # Athlete accessing their own workout or demo
-            url = f"{base}/v2/workouts/wod/file/{workout_id}/?format={file_format}"
+            url = f"{API_BASE}/v2/workouts/wod/file/{workout_id}/?format={file_format}"
         
         # Make request
         r = requests.get(url, headers=self._headers(), timeout=30)
@@ -403,15 +394,13 @@ class TrainingPeaksAPI:
                 f"The workouts:details endpoint requires a premium TrainingPeaks subscription."
             )
         
-        # Use production API — sandbox doesn't have uploaded workout files
-        base = API_BASE_PROD
         # Build URL - use athlete-scoped endpoint if tp_athlete_id provided
         if tp_athlete_id:
             # Coach accessing roster athlete's workout details
-            url = f"{base}/v2/workouts/{tp_athlete_id}/id/{workout_id}/details"
+            url = f"{API_BASE}/v2/workouts/{tp_athlete_id}/id/{workout_id}/details"
         else:
             # Athlete accessing their own workout details
-            url = f"{base}/v2/workouts/id/{workout_id}/details"
+            url = f"{API_BASE}/v2/workouts/id/{workout_id}/details"
         
         # Make request (increased timeout for large time series data)
         # Use retry logic for timeout-prone endpoint

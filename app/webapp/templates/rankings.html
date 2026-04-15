@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="margin-bottom: 12px;">
+  <h2 style="margin: 0 0 4px; color: #c8102e;">World Triathlon Rankings</h2>
+  <p class="muted" style="margin: 0; font-size: 13px;">Click any athlete to view their scoring breakdown</p>
+</div>
+
+<!-- Category tabs -->
+<div class="tabs" id="ranking-tabs" style="margin-bottom: 12px;">
+  {% for cat_id, cat_label in categories.items() %}
+  <button class="tab-btn {% if cat_id == default_cat_id %}active{% endif %}" data-cat="{{ cat_id }}"
+    onclick="switchRankingCat({{ cat_id }}, this)">
+    {{ cat_label }}
+  </button>
+  {% endfor %}
+</div>
+
+<!-- Filters -->
+<div class="card" style="padding: 12px 16px;">
+  <form id="rankings-filters" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+    <input type="hidden" id="ranking-cat-id" name="cat_id" value="{{ default_cat_id }}">
+    <input type="hidden" id="ranking-page" name="page" value="1">
+
+    <label style="font-size: 13px; font-weight: 600;">Country:</label>
+    <select name="country" id="ranking-country" hx-get="/partials/rankings_table" hx-target="#rankings-table"
+      hx-include="#rankings-filters" hx-trigger="change" style="min-width: 160px;">
+      <option value="">All Countries</option>
+      {% for c in countries %}
+      <option value="{{ c }}">{{ c }}</option>
+      {% endfor %}
+    </select>
+
+    <label style="font-size: 13px; font-weight: 600;">Search:</label>
+    <input type="text" name="search" id="ranking-search" placeholder="Athlete name..." hx-get="/partials/rankings_table"
+      hx-target="#rankings-table" hx-include="#rankings-filters" hx-trigger="keyup changed delay:400ms"
+      style="min-width: 180px;">
+
+    <button type="button" class="btn secondary" style="font-size: 13px; padding: 8px 12px;"
+      onclick="clearRankingFilters()">Clear</button>
+  </form>
+</div>
+
+<!-- Table container -->
+<div id="rankings-table" hx-get="/partials/rankings_table" hx-trigger="load" hx-include="#rankings-filters">
+  <p class="muted" style="text-align:center; padding: 40px;">Loading rankings...</p>
+</div>
+
+<script>
+  function switchRankingCat(catId, btn) {
+    // Toggle active tab
+    document.querySelectorAll('#ranking-tabs .tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    // Update hidden cat_id and reset page
+    document.getElementById('ranking-cat-id').value = catId;
+    document.getElementById('ranking-page').value = '1';
+    // Fire HTMX request
+    htmx.ajax('GET', '/partials/rankings_table', {
+      target: '#rankings-table',
+      values: Object.fromEntries(new FormData(document.getElementById('rankings-filters')))
+    });
+  }
+
+  function clearRankingFilters() {
+    document.getElementById('ranking-country').value = '';
+    document.getElementById('ranking-search').value = '';
+    document.getElementById('ranking-page').value = '1';
+    htmx.ajax('GET', '/partials/rankings_table', {
+      target: '#rankings-table',
+      values: Object.fromEntries(new FormData(document.getElementById('rankings-filters')))
+    });
+  }
+
+  function rankingGoToPage(page) {
+    document.getElementById('ranking-page').value = page;
+    htmx.ajax('GET', '/partials/rankings_table', {
+      target: '#rankings-table',
+      values: Object.fromEntries(new FormData(document.getElementById('rankings-filters')))
+    });
+  }
+</script>
+{% endblock %}

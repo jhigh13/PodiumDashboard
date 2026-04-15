@@ -1,0 +1,34 @@
+{% if error %}
+<div class="muted">{{ error }}</div>
+{% elif workouts is none %}
+<div class="muted">Pick a date and we'll find all TrainingPeaks workouts for that day (±1 day).</div>
+{% elif workouts | length == 0 %}
+<div class="muted">No workouts found for {{ explorer_date }} (±1 day).</div>
+{% else %}
+<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end;">
+  <div>
+    <div class="muted">Segment</div>
+    <select id="explorer_trace_sport" name="explorer_trace_sport">
+      {% for opt in sport_options %}
+      <option value="{{ opt.value }}" {% if opt.value==selected_sport %}selected{% endif %}>{{ opt.label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div style="flex:1; min-width:280px;">
+    <div class="muted">Workout</div>
+    <select id="explorer_workout" name="explorer_workout" style="width:100%; max-width:600px;">
+      <option value="">Select…</option>
+      {% for w in workouts %}
+      <option value="{{ w.workout_id }}">{{ w.label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</div>
+
+<div style="margin-top:12px;">
+  <button class="btn" hx-get="/partials/workout_trace" hx-include="#controls, #explorer_workout, #explorer_trace_sport"
+    hx-target="#workout-trace-container" hx-swap="innerHTML">Load Trace</button>
+</div>
+
+<div id="workout-trace-container" class="muted" style="margin-top:12px;">Select a workout and click "Load Trace".</div>
+{% endif %}

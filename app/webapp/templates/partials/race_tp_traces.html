@@ -1,30 +1,53 @@
 {% if error %}
-  <div class="muted">{{ error }}</div>
+<div class="muted">{{ error }}</div>
 {% else %}
-  <div class="row" style="align-items:stretch;">
-    <div class="col card" style="margin-bottom:0;">
-      <h4 style="margin-top:0;">{{ title }}</h4>
-      {% if fig_json %}
-        <div id="chart-tp-compare" data-fig="{{ fig_json | e }}" style="height:420px;"></div>
-        <script>
-          (function () {
-            if (typeof Plotly === 'undefined') return;
-            const el = document.getElementById('chart-tp-compare');
-            if (!el) return;
-            const raw = el.dataset.fig;
-            if (!raw) return;
-            const fig = JSON.parse(raw);
-            const config = { displayModeBar: false, responsive: true };
-            Plotly.react(el, fig.data, fig.layout, config);
-          })();
-        </script>
-      {% else %}
-        <div class="muted">No time-series channels available for this selection.</div>
-      {% endif %}
+<div class="row" style="align-items:stretch;">
+  <div class="col card" style="margin-bottom:0;">
+    <h4 style="margin-top:0;">{{ title }}</h4>
+    {% if fig_json %}
+    <div id="chart-tp-compare" data-fig="{{ fig_json | e }}" style="height:420px;"></div>
+    <script>
+      (function () {
+        if (typeof Plotly === 'undefined') return;
+        const el = document.getElementById('chart-tp-compare');
+        if (!el) return;
+        const raw = el.dataset.fig;
+        if (!raw) return;
+        const fig = JSON.parse(raw);
+        const config = { displayModeBar: false, responsive: true };
+        Plotly.react(el, fig.data, fig.layout, config);
+      })();
+    </script>
+    {% else %}
+    <div class="muted">No time-series channels available for this selection.</div>
+    {% endif %}
 
-      {% if notes %}
-        <div class="muted" style="margin-top:10px;">{{ notes }}</div>
+    {% if notes %}
+    <div class="muted" style="margin-top:10px;">{{ notes }}</div>
+    {% endif %}
+
+    {% if tp_workout_a or tp_workout_b %}
+    <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
+      {% if tp_workout_a %}
+      <a class="btn"
+        href="/api/timeseries_csv?target_athlete_id={{ target_athlete_id }}&tp_workout_id={{ tp_workout_a }}&sport={{ sport }}&race_label={{ (race_label_a or '')|urlencode }}&athlete_short={{ (athlete_short or '')|urlencode }}"
+        download style="text-decoration:none; font-size:0.85rem;">
+        &#x2B07; Download Race A CSV
+        {% if sport == 'bike' %}(speed, power, HR, cadence, elevation){% else %}(speed, HR, cadence, elevation){% endif
+        %}
+      </a>
+      {% endif %}
+      {% if tp_workout_b %}
+      <a class="btn"
+        href="/api/timeseries_csv?target_athlete_id={{ target_athlete_id }}&tp_workout_id={{ tp_workout_b }}&sport={{ sport }}&race_label={{ (race_label_b or '')|urlencode }}&athlete_short={{ (athlete_short or '')|urlencode }}"
+        download style="text-decoration:none; font-size:0.85rem;">
+        &#x2B07; Download Race B CSV
+        {% if sport == 'bike' %}(speed, power, HR, cadence, elevation){% else %}(speed, HR, cadence, elevation){% endif
+        %}
+      </a>
       {% endif %}
     </div>
+    {% endif %}
   </div>
+</div>
 {% endif %}

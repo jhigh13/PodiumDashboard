@@ -1,0 +1,115 @@
+<p class="muted" style="font-size: 13px; margin-bottom: 8px;">
+  Showing {{ ((page - 1) * per_page) + 1 }}&ndash;{{ [page * per_page, total_count] | min }} of {{ total_count }} athletes
+  {% if country %} in <strong>{{ country }}</strong>{% endif %}
+  {% if search %} matching "<strong>{{ search }}</strong>"{% endif %}
+</p>
+
+{% set colspan = 6 if is_wtcs else 13 %}
+
+<div class="card" style="padding: 0; overflow-x: auto;">
+  <table>
+    <thead>
+      <tr>
+        <th style="text-align:center; width:60px;">Rank</th>
+        <th>Athlete</th>
+        <th>Country</th>
+        <th style="text-align:right">Points</th>
+        {% if is_wtcs %}
+        <th style="text-align:center" title="Total events scored">Events</th>
+        {% else %}
+        <th style="text-align:center" title="Events in current period (0-1 years)">Curr</th>
+        <th style="text-align:center" title="Events in previous period (1-2 years)">Prev</th>
+        {% endif %}
+        <th style="text-align:center">Change</th>
+        {% if not is_wtcs %}
+        <th style="text-align:right; color:#d93025;" title="Points expiring in 2 weeks">Risk 2W</th>
+        <th style="text-align:right; color:#d93025;" title="Points expiring in 1 month">Risk 1M</th>
+        <th style="text-align:right; color:#d93025;" title="Points expiring in 3 months">Risk 3M</th>
+        <th style="text-align:center; color:#d93025;" title="Projected rank drop in 2 weeks">Drop 2W</th>
+        <th style="text-align:center; color:#d93025;" title="Projected rank drop in 1 month">Drop 1M</th>
+        <th style="text-align:center; color:#d93025;" title="Projected rank drop in 3 months">Drop 3M</th>
+        {% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in athletes %}
+      {% set risk = at_risk.get(a.athlete_id, {}) %}
+      {% set drop = drops.get(a.athlete_id, {}) %}
+      {% set chg = changes.get(a.athlete_id) %}
+      {% set ec = event_counts.get(a.athlete_id, {}) %}
+      <tr style="cursor:pointer;" onclick="toggleBreakdown(this, {{ cat_id }}, {{ a.athlete_id }})">
+        <td style="text-align:center; font-weight:bold;">{{ a.rank_position }}</td>
+        <td>{{ a.athlete_name }}</td>
+        <td>{{ a.country }}</td>
+        <td style="text-align:right">{% if a.total_points %}{{ "{:,.0f}".format(a.total_points) }}{% else %}&mdash;{% endif %}</td>
+        {% if is_wtcs %}
+        <td style="text-align:center">{% if ec %}{{ ec.curr + ec.prev }}{% else %}&mdash;{% endif %}</td>
+        {% else %}
+        <td style="text-align:center">{% if a.get('events_current_period') is not none %}{{ a.get('events_current_period') }}{% else %}&mdash;{% endif %}</td>
+        <td style="text-align:center">{% if a.get('events_previous_period') is not none %}{{ a.get('events_previous_period') }}{% else %}&mdash;{% endif %}</td>
+        {% endif %}
+        <td style="text-align:center;">
+          {% if chg is none %}&mdash;
+          {% elif chg > 0 %}<span style="color:#16a34a;">&#x25B2; {{ chg }}</span>
+          {% elif chg < 0 %}<span style="color:#d93025;">&#x25BC; {{ chg|abs }}</span>
+          {% else %}&mdash;{% endif %}
+        </td>
+        {% if not is_wtcs %}
+        <td style="text-align:right; color:#d93025;">{% if risk.get('r2w') %}{{ "{:,.0f}".format(risk.r2w) }}{% else %}&mdash;{% endif %}</td>
+        <td style="text-align:right; color:#d93025;">{% if risk.get('r1m') %}{{ "{:,.0f}".format(risk.r1m) }}{% else %}&mdash;{% endif %}</td>
+        <td style="text-align:right; color:#d93025;">{% if risk.get('r3m') %}{{ "{:,.0f}".format(risk.r3m) }}{% else %}&mdash;{% endif %}</td>
+        <td style="text-align:center; color:#d93025;">
+          {% if drop.get('2w') %}<span>&#x25BC; {{ drop['2w'] }}</span>{% else %}&mdash;{% endif %}
+        </td>
+        <td style="text-align:center; color:#d93025;">
+          {% if drop.get('1m') %}<span>&#x25BC; {{ drop['1m'] }}</span>{% else %}&mdash;{% endif %}
+        </td>
+        <td style="text-align:center; color:#d93025;">
+          {% if drop.get('3m') %}<span>&#x25BC; {{ drop['3m'] }}</span>{% else %}&mdash;{% endif %}
+        </td>
+        {% endif %}
+      </tr>
+      <tr id="detail-{{ a.athlete_id }}" style="display:none;">
+        <td colspan="{{ colspan }}" style="padding:0;"></td>
+      </tr>
+      {% endfor %}
+
+      {% if not athletes %}
+      <tr>
+        <td colspan="{{ colspan }}" style="text-align:center; padding:24px;" class="muted">No athletes found.</td>
+      </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Pagination -->
+{% if total_pages > 1 %}
+<div style="display:flex; justify-content:center; align-items:center; gap:12px; margin-top:12px;">
+  <button class="btn secondary" style="font-size:13px; padding:6px 12px;" {% if page <=1 %}disabled{% endif %}
+    onclick="rankingGoToPage({{ page - 1 }})">
+    Previous
+  </button>
+  <span class="muted" style="font-size:13px;">Page {{ page }} of {{ total_pages }}</span>
+  <button class="btn secondary" style="font-size:13px; padding:6px 12px;" {% if page>= total_pages %}disabled{% endif %}
+    onclick="rankingGoToPage({{ page + 1 }})">
+    Next
+  </button>
+</div>
+{% endif %}
+
+<script>
+  function toggleBreakdown(row, catId, athleteId) {
+    var detailRow = document.getElementById('detail-' + athleteId);
+    var cell = detailRow.querySelector('td');
+    if (detailRow.style.display === 'none') {
+      detailRow.style.display = '';
+      // Fetch breakdown if not already loaded
+      if (!cell.innerHTML.trim()) {
+        htmx.ajax('GET', '/partials/rankings_breakdown/' + catId + '/' + athleteId, { target: cell, swap: 'innerHTML' });
+      }
+    } else {
+      detailRow.style.display = 'none';
+    }
+  }
+</script>

@@ -122,10 +122,99 @@ def is_fit_cached(tp_workout_id: str | int) -> bool:
     return _fit_cache_path(tp_workout_id).exists()
 
 
+# ── FIT file parsing ─────────────────────────────────────────────────────────
+
+# Map FIT record field names to the TP-style channel names used downstream.
+_FIT_FIELD_TO_CHANNEL = [
+    ("speed", "Speed"),
+    ("enhanced_speed", "Speed"),
+    ("heart_rate", "HeartRate"),
+    ("power", "Power"),
+    ("cadence", "Cadence"),
+    ("enhanced_altitude", "Elevation"),
+    ("altitude", "Elevation"),
+    ("distance", "Distance"),
+    ("vertical_oscillation", "VerticalOscillation"),
+    ("stance_time", "StanceTime"),
+    ("step_length", "StepLength"),
+]
+
+
+def parse_fit_to_timeseries(fit_bytes: bytes) -> dict:
+    """Parse a FIT activity file into the same dict format as the TP details API.
+
+    Returns a dict with the same shape as fetch_workout_time_series():
+        {
+            "WorkoutChannels": {
+                "Channels": ["Speed", "HeartRate", "Power", ...],
+                "Data": [
+                    {"Event": "Start", "MillisecondOffset": 0, "Values": [...]},
+                    ...
+                ]
+            }
+        }
+    """
+    import io
+    import fitparse
+
+    fit_file = fitparse.FitFile(io.BytesIO(fit_bytes))
+    records = list(fit_file.get_messages("record"))
+    if not records:
+        return {"WorkoutChannels": {"Channels": [], "Data": []}}
+
+    # Discover which channels are present by scanning the first record's fields.
+    first_fields = {f.name for f in records[0].fields}
+    channels: list[str] = []
+    field_keys: list[str] = []  # parallel list of FIT field names
+    seen_channels: set[str] = set()
+    for fit_name, ch_name in _FIT_FIELD_TO_CHANNEL:
+        if fit_name in first_fields and ch_name not in seen_channels:
+            channels.append(ch_name)
+            field_keys.append(fit_name)
+            seen_channels.add(ch_name)
+
+    # Determine the base timestamp from the first record.
+    base_ts = None
+    for f in records[0].fields:
+        if f.name == "timestamp" and f.value is not None:
+            base_ts = f.value
+            break
+
+    data: list[dict] = []
+    for i, rec in enumerate(records):
+        # Build a quick lookup of field values for this record.
+        field_vals = {f.name: f.value for f in rec.fields}
+
+        # Compute millisecond offset
+        ts = field_vals.get("timestamp")
+        if base_ts is not None and ts is not None:
+            delta = ts - base_ts
+            ms_offset = int(delta.total_seconds() * 1000)
+        else:
+            ms_offset = i * 1000  # fallback: 1-second spacing
+
+        values = []
+        for fk in field_keys:
+            v = field_vals.get(fk)
+            values.append(float(v) if v is not None else 0.0)
+
+        event = "Start" if i == 0 else ("Stop" if i == len(records) - 1 else "")
+        data.append({
+            "Event": event,
+            "MillisecondOffset": ms_offset,
+            "Values": values,
+        })
+
+    return {"WorkoutChannels": {"Channels": channels, "Data": data}}
+
+
 # ── Cache-through API fetch ──────────────────────────────────────────────────
 
 def fetch_timeseries_cached(api, tp_workout_id: str, tp_athlete_id: int) -> dict:
     """Fetch timeseries with cache-through: return cached if available, else fetch & cache.
+
+    Primary path: download the FIT file (fast, small binary) and parse locally.
+    Fallback: use the TP details/timeseries JSON endpoint if no FIT is available.
 
     Args:
         api: TrainingPeaksAPI instance (already authenticated)
@@ -135,11 +224,26 @@ def fetch_timeseries_cached(api, tp_workout_id: str, tp_athlete_id: int) -> dict
     Returns:
         The full timeseries payload dict
     """
+    # 1. Check JSON cache first (covers previously fetched data via either path)
     cached = get_cached_timeseries(tp_workout_id)
     if cached is not None:
         return cached
 
-    logger.info("Cache MISS for timeseries %s — fetching from TP API...", tp_workout_id)
+    # 2. Try FIT file: download, parse, cache the resulting JSON
+    logger.info("Cache MISS for timeseries %s — trying FIT download...", tp_workout_id)
+    try:
+        fit_bytes = fetch_fit_cached(api, tp_workout_id, tp_athlete_id)
+        payload = parse_fit_to_timeseries(fit_bytes)
+        # Only cache if we actually got data rows
+        if (payload.get("WorkoutChannels") or {}).get("Data"):
+            save_timeseries(tp_workout_id, payload)
+            return payload
+        logger.warning("FIT file for %s parsed but contained no record data.", tp_workout_id)
+    except Exception as e:
+        logger.warning("FIT download/parse failed for %s: %s — falling back to details API.", tp_workout_id, e)
+
+    # 3. Fallback: TP details JSON endpoint (slow, may timeout for large files)
+    logger.info("Falling back to details API for %s...", tp_workout_id)
     payload = api.fetch_workout_time_series(tp_workout_id, tp_athlete_id=tp_athlete_id)
     save_timeseries(tp_workout_id, payload)
     return payload

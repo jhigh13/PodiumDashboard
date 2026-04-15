@@ -11,8 +11,8 @@ class Settings(BaseSettings):
     secret_key: str = Field("dev_secret", alias="SECRET_KEY")
     tp_client_id: str = Field("", alias="TP_CLIENT_ID")
     tp_client_secret: str = Field("", alias="TP_CLIENT_SECRET")
-    tp_auth_base: str = Field("https://oauth.sandbox.trainingpeaks.com", alias="TP_AUTH_BASE")
-    tp_api_base: str = Field("https://api.sandbox.trainingpeaks.com", alias="TP_API_BASE")
+    tp_auth_base: str = Field("https://oauth.trainingpeaks.com", alias="TP_AUTH_BASE")
+    tp_api_base: str = Field("https://api.trainingpeaks.com", alias="TP_API_BASE")
     tp_redirect_uri: str = Field("http://localhost:8501/", alias="TP_REDIRECT_URI")
     # Web app redirect URI (FastAPI). Keep Streamlit redirect separate.
     tp_web_redirect_uri: str = Field("http://localhost:8000/oauth/callback", alias="TP_WEB_REDIRECT_URI")
@@ -33,6 +33,9 @@ class Settings(BaseSettings):
 
     # Optional: external canonical triathlon results database (read-only recommended)
     triathlon_database_url: str = Field("", alias="TRIATHLON_DATABASE_URL")
+
+    # Optional: public URL for the rankings dashboard (used in email links)
+    rankings_dashboard_url: str = Field("", alias="RANKINGS_DASHBOARD_URL")
 
     class Config:
         case_sensitive = False

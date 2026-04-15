@@ -9,7 +9,7 @@ from typing import Optional
 
 import requests
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy import select, delete, text
@@ -266,7 +266,7 @@ def create_app() -> FastAPI:
     def root(request: Request):
         athlete_id = _get_session_athlete_id(request)
         if not athlete_id:
-            return RedirectResponse(url="/login", status_code=302)
+            return RedirectResponse(url="/rankings", status_code=302)
         role = request.session.get("role")
         return RedirectResponse(url="/coach" if role == "coach" else "/me", status_code=302)
 
@@ -1954,6 +1954,8 @@ def create_app() -> FastAPI:
         tp_compare_sport: str | None = None,
         tp_workout_a: str | None = None,
         tp_workout_b: str | None = None,
+        compare_race_a: str | None = None,
+        compare_race_b: str | None = None,
         requester_id: int = Depends(require_login),
     ):
         role = request.session.get("role") or "athlete"
@@ -2130,6 +2132,47 @@ def create_app() -> FastAPI:
         all_notes = " ".join([n for n in (cache_note_parts[0] if cache_note_parts else None, notes) if n])
 
         fig_json = fig.to_json() if fig.data else None
+
+        has_power_a = any(v is not None for v in s_a["power"])
+        has_power_b = any(v is not None for v in s_b["power"])
+
+        # Build athlete short name for filenames (e.g. "JSmith")
+        athlete_short = ""
+        if athlete and athlete.name:
+            parts = athlete.name.strip().split()
+            if len(parts) >= 2:
+                athlete_short = parts[0][0] + parts[-1]
+            elif parts:
+                athlete_short = parts[0]
+
+        # Build race labels for download filenames (e.g. "2025-06-15 Hamburg WTCS")
+        race_label_a = ""
+        race_label_b = ""
+        key_a = _parse_event_prog_key(compare_race_a)
+        key_b = _parse_event_prog_key(compare_race_b)
+        if key_a or key_b:
+            with get_session() as session:
+                if key_a:
+                    r = session.execute(
+                        select(WTORaceResult.event_date, WTORaceResult.event_name)
+                        .where(WTORaceResult.podium_athlete_id == int(target_athlete_id))
+                        .where(WTORaceResult.event_id == int(key_a[0]))
+                        .where(WTORaceResult.prog_id == int(key_a[1]))
+                        .limit(1)
+                    ).first()
+                    if r:
+                        race_label_a = f"{r.event_date} {r.event_name}"
+                if key_b:
+                    r = session.execute(
+                        select(WTORaceResult.event_date, WTORaceResult.event_name)
+                        .where(WTORaceResult.podium_athlete_id == int(target_athlete_id))
+                        .where(WTORaceResult.event_id == int(key_b[0]))
+                        .where(WTORaceResult.prog_id == int(key_b[1]))
+                        .limit(1)
+                    ).first()
+                    if r:
+                        race_label_b = f"{r.event_date} {r.event_name}"
+
         return templates.TemplateResponse(
             "partials/race_tp_traces.html",
             {
@@ -2138,6 +2181,404 @@ def create_app() -> FastAPI:
                 "fig_json": fig_json,
                 "title": title,
                 "notes": all_notes or None,
+                "target_athlete_id": target_athlete_id,
+                "sport": sport,
+                "tp_workout_a": wid_a,
+                "tp_workout_b": wid_b,
+                "has_power_a": has_power_a,
+                "has_power_b": has_power_b,
+                "race_label_a": race_label_a,
+                "race_label_b": race_label_b,
+                "athlete_short": athlete_short,
+            },
+        )
+
+    # ── Timeseries CSV download ──────────────────────────────────────────────
+    @app.get("/api/timeseries_csv")
+    def api_timeseries_csv(
+        request: Request,
+        target_athlete_id: int,
+        tp_workout_id: str,
+        sport: str = "run",
+        race_label: str = "",
+        athlete_short: str = "",
+        requester_id: int = Depends(require_login),
+    ):
+        """Download full-resolution time series as CSV.
+
+        Bike: elapsed_seconds, speed_m_s, power_watts, heart_rate_bpm, cadence_rpm, elevation_m
+        Run:  elapsed_seconds, speed_m_s, heart_rate_bpm, cadence_spm, elevation_m
+        """
+        import csv
+        import io
+
+        role = request.session.get("role") or "athlete"
+        if not can_access_athlete(requester_id, role, target_athlete_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        wid = tp_workout_id.strip()
+        if not wid:
+            raise HTTPException(status_code=400, detail="Missing tp_workout_id")
+
+        with get_session() as session:
+            athlete = session.get(Athlete, int(target_athlete_id))
+        if not athlete or not athlete.tp_athlete_id:
+            raise HTTPException(status_code=404, detail="Athlete not found or missing tp_athlete_id")
+
+        api = get_api(int(target_athlete_id))
+        tp_aid = int(athlete.tp_athlete_id)
+
+        try:
+            payload = fetch_timeseries_cached(api, wid, tp_aid)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Could not load timeseries: {e}")
+
+        channels, rows = _extract_channels_payload(payload)
+        if not rows:
+            raise HTTPException(status_code=404, detail="No timeseries data in this workout")
+
+        idx_time = _find_channel_index(channels, {"millisecondoffset", "time", "seconds", "sec", "elapsedtime", "elapsedseconds"})
+        idx_speed = _find_channel_index(channels, {"speed", "velocity", "vel"})
+        idx_power = _find_channel_index(channels, {"power", "watts", "w"})
+        idx_hr = _find_channel_index(channels, {"heartrate", "hr"})
+        idx_cadence = _find_channel_index(channels, {"cadence"})
+        idx_elevation = _find_channel_index(channels, {"elevation", "altitude", "alt"})
+
+        time_is_ms = False
+        if idx_time is not None:
+            ch_name = (channels[idx_time] or "").strip().lower().replace(" ", "")
+            time_is_ms = "millisecond" in ch_name
+
+        sport_norm = _sport_norm(sport) or "run"
+
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+
+        if sport_norm == "bike":
+            writer.writerow(["elapsed_seconds", "speed_m_s", "power_watts", "heart_rate_bpm", "cadence_rpm", "elevation_m"])
+        else:
+            writer.writerow(["elapsed_seconds", "speed_m_s", "heart_rate_bpm", "cadence_spm", "elevation_m"])
+
+        def _val(row, idx):
+            if idx is None or idx >= len(row):
+                return ""
+            v = row[idx]
+            if v is None:
+                return ""
+            return v
+
+        for r in rows:
+            if idx_time is not None and idx_time < len(r):
+                try:
+                    raw_t = float(r[idx_time])
+                    t_sec = raw_t / 1000.0 if time_is_ms else raw_t
+                except Exception:
+                    t_sec = ""
+            else:
+                t_sec = ""
+
+            speed_val = _val(r, idx_speed)
+            hr_val = _val(r, idx_hr)
+            cadence_val = _val(r, idx_cadence)
+            elev_val = _val(r, idx_elevation)
+            if sport_norm == "bike":
+                power_val = _val(r, idx_power)
+                writer.writerow([t_sec, speed_val, power_val, hr_val, cadence_val, elev_val])
+            else:
+                writer.writerow([t_sec, speed_val, hr_val, cadence_val, elev_val])
+
+        buf.seek(0)
+
+        # Build a descriptive filename from race label + athlete or fall back to workout ID
+        import re as _re
+        safe_athlete = _re.sub(r'[^\w]', '', athlete_short).strip() if athlete_short else ""
+        if race_label:
+            safe_label = _re.sub(r'[^\w\s-]', '', race_label).strip().replace(' ', '_')
+            parts = [safe_athlete, safe_label, sport_norm] if safe_athlete else [safe_label, sport_norm]
+            filename = "_".join(parts) + ".csv"
+        else:
+            parts = [safe_athlete, "timeseries", sport_norm, wid] if safe_athlete else ["timeseries", sport_norm, wid]
+            filename = "_".join(parts) + ".csv"
+        return StreamingResponse(
+            buf,
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    # ── Workout Explorer (any TP workout, not tied to triathlon races) ───────
+    @app.get("/partials/workout_explorer", response_class=HTMLResponse)
+    def partial_workout_explorer(
+        request: Request,
+        target_athlete_id: int,
+        explorer_date: str | None = None,
+        explorer_sport: str | None = None,
+        requester_id: int = Depends(require_login),
+    ):
+        role = request.session.get("role") or "athlete"
+        if not can_access_athlete(requester_id, role, target_athlete_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        day = _parse_date(explorer_date)
+        if not day:
+            return templates.TemplateResponse(
+                "partials/workout_explorer.html",
+                {"request": request, "error": None, "workouts": None, "explorer_date": ""},
+            )
+
+        with get_session() as session:
+            athlete = session.get(Athlete, int(target_athlete_id))
+        if not athlete or not athlete.tp_athlete_id:
+            return templates.TemplateResponse(
+                "partials/workout_explorer.html",
+                {"request": request, "error": "Athlete missing TrainingPeaks ID.", "workouts": None, "explorer_date": str(day)},
+            )
+
+        selected_sport = _sport_norm(explorer_sport) or ""
+        api = get_api(int(target_athlete_id))
+        start = day - timedelta(days=1)
+        end = day + timedelta(days=1)
+        try:
+            raw_workouts = api.fetch_workouts(start, end, tp_athlete_id=int(athlete.tp_athlete_id))
+        except Exception as e:
+            return templates.TemplateResponse(
+                "partials/workout_explorer.html",
+                {"request": request, "error": f"Error fetching workouts: {e}", "workouts": None, "explorer_date": str(day)},
+            )
+
+        workouts: list[dict] = []
+        for w in raw_workouts or []:
+            wid = w.get("workoutId") or w.get("WorkoutId") or w.get("id") or w.get("Id")
+            if not wid:
+                continue
+            sport = w.get("WorkoutType") or w.get("sportType") or w.get("sport") or ""
+            title = w.get("Title") or w.get("title") or w.get("WorkoutName") or ""
+            date_field = w.get("workoutDay") or w.get("WorkoutDay") or w.get("Date") or w.get("date")
+            w_day = _coerce_date(date_field)
+            completed = bool(w.get("Completed", False))
+            dur_sec = None
+            if completed and w.get("TotalTime"):
+                try:
+                    val = float(w.get("TotalTime"))
+                    dur_sec = int(val * 3600) if val < 20 else int(val)
+                except Exception:
+                    dur_sec = None
+
+            tss_val = w.get("TssActual") if completed else None
+            if_val = w.get("IF") if completed else None
+
+            parts = []
+            if w_day:
+                parts.append(str(w_day))
+            if sport:
+                parts.append(str(sport))
+            if title:
+                parts.append(str(title))
+            meta = []
+            if dur_sec:
+                meta.append(_format_duration(int(dur_sec)))
+            if tss_val is not None:
+                try:
+                    meta.append(f"TSS {float(tss_val):.0f}")
+                except Exception:
+                    pass
+            if if_val is not None:
+                try:
+                    meta.append(f"IF {float(if_val):.2f}")
+                except Exception:
+                    pass
+
+            label = " • ".join([p for p in parts if p])
+            if meta:
+                label = f"{label} — {', '.join(meta)}"
+            workouts.append({"workout_id": str(wid), "sport": str(sport or ""), "duration_sec": dur_sec, "label": label, "title": title, "date": str(w_day or day)})
+
+        workouts.sort(
+            key=lambda x: (
+                0 if selected_sport and _sport_matches(x.get("sport"), selected_sport) else 1,
+                -(int(x.get("duration_sec") or 0)),
+                x.get("label") or "",
+            )
+        )
+
+        sport_options = [
+            {"value": "", "label": "All"},
+            {"value": "run", "label": "Run"},
+            {"value": "bike", "label": "Bike"},
+            {"value": "swim", "label": "Swim"},
+        ]
+
+        return templates.TemplateResponse(
+            "partials/workout_explorer.html",
+            {
+                "request": request,
+                "error": None,
+                "workouts": workouts,
+                "sport_options": sport_options,
+                "selected_sport": selected_sport,
+                "explorer_date": str(day),
+                "target_athlete_id": target_athlete_id,
+            },
+        )
+
+    @app.get("/partials/workout_trace", response_class=HTMLResponse)
+    def partial_workout_trace(
+        request: Request,
+        target_athlete_id: int,
+        explorer_workout: str | None = None,
+        explorer_trace_sport: str | None = None,
+        requester_id: int = Depends(require_login),
+    ):
+        """Load a single-workout trace chart with CSV download."""
+        role = request.session.get("role") or "athlete"
+        if not can_access_athlete(requester_id, role, target_athlete_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        wid = (explorer_workout or "").strip()
+        sport = _sport_norm(explorer_trace_sport) or "run"
+        if not wid:
+            return templates.TemplateResponse(
+                "partials/workout_trace.html",
+                {"request": request, "error": "Select a workout first.", "fig_json": None, "title": "", "notes": None},
+            )
+
+        with get_session() as session:
+            athlete = session.get(Athlete, int(target_athlete_id))
+        if not athlete or not athlete.tp_athlete_id:
+            return templates.TemplateResponse(
+                "partials/workout_trace.html",
+                {"request": request, "error": "Missing tp_athlete_id.", "fig_json": None, "title": "", "notes": None},
+            )
+
+        api = get_api(int(target_athlete_id))
+        tp_aid = int(athlete.tp_athlete_id)
+        notes = None
+
+        try:
+            cached = is_timeseries_cached(wid)
+            payload = fetch_timeseries_cached(api, wid, tp_aid)
+            cache_note = "Loaded from cache." if cached else "Fetched from TP and cached."
+        except Exception as e:
+            return templates.TemplateResponse(
+                "partials/workout_trace.html",
+                {"request": request, "error": str(e), "fig_json": None, "title": "", "notes": None},
+            )
+
+        channels, rows = _extract_channels_payload(payload)
+        if not rows:
+            return templates.TemplateResponse(
+                "partials/workout_trace.html",
+                {"request": request, "error": "No time-series data in this workout.", "fig_json": None, "title": "", "notes": None},
+            )
+
+        idx_time = _find_channel_index(channels, {"millisecondoffset", "time", "seconds", "sec", "elapsedtime", "elapsedseconds"})
+        idx_speed = _find_channel_index(channels, {"speed", "velocity", "vel"})
+        idx_hr = _find_channel_index(channels, {"heartrate", "hr"})
+        idx_power = _find_channel_index(channels, {"power", "watts", "w"})
+
+        time_is_ms = False
+        if idx_time is not None:
+            ch_name = (channels[idx_time] or "").strip().lower().replace(" ", "")
+            time_is_ms = "millisecond" in ch_name
+
+        n = len(rows)
+        max_points = 1400
+        stride = max(1, int(math.ceil(n / max_points)))
+
+        xs: list[float] = []
+        speed: list[float | None] = []
+        hr: list[float | None] = []
+        power: list[float | None] = []
+
+        for i in range(0, n, stride):
+            r = rows[i]
+            if idx_time is not None and idx_time < len(r):
+                try:
+                    raw_t = float(r[idx_time])
+                    t_sec = raw_t / 1000.0 if time_is_ms else raw_t
+                except Exception:
+                    t_sec = float(i)
+            else:
+                t_sec = float(i)
+            xs.append(t_sec / 60.0)
+
+            def _get(idx: int | None) -> float | None:
+                if idx is None or idx >= len(r):
+                    return None
+                try:
+                    v = r[idx]
+                    return float(v) if v is not None else None
+                except Exception:
+                    return None
+
+            speed.append(_get(idx_speed))
+            hr.append(_get(idx_hr))
+            power.append(_get(idx_power))
+
+        import plotly.graph_objects as go
+
+        def _pace_min_per_mile(speed_mps: float | None) -> float | None:
+            if speed_mps is None or speed_mps <= 0:
+                return None
+            return (1609.34 / speed_mps) / 60.0
+
+        fig = go.Figure()
+        title = ""
+
+        if sport == "run":
+            title = "Run: Pace + Heart Rate"
+            y_pace = [_pace_min_per_mile(v) for v in speed]
+            fig.add_trace(go.Scatter(x=xs, y=y_pace, mode="lines", name="Pace", line=dict(color="#dc2626", width=2)))
+            if any(v is not None for v in hr):
+                fig.add_trace(go.Scatter(x=xs, y=hr, mode="lines", name="HR", line=dict(color="#2563eb", width=1, dash="dot"), yaxis="y2"))
+                fig.update_layout(yaxis2=dict(title="Heart Rate (bpm)", overlaying="y", side="right"))
+            fig.update_yaxes(title_text="Pace (min/mi)")
+        elif sport == "bike":
+            title = "Bike: Power + Heart Rate"
+            if any(v is not None for v in power):
+                fig.add_trace(go.Scatter(x=xs, y=power, mode="lines", name="Power", line=dict(color="#dc2626", width=2)))
+                fig.update_yaxes(title_text="Power (W)")
+            else:
+                notes = "No power channel found; showing HR if available."
+            if any(v is not None for v in hr):
+                fig.add_trace(go.Scatter(x=xs, y=hr, mode="lines", name="HR", line=dict(color="#2563eb", width=1, dash="dot"), yaxis="y2"))
+                fig.update_layout(yaxis2=dict(title="Heart Rate (bpm)", overlaying="y", side="right"))
+        else:
+            title = "Swim: Pace"
+            def _pace_100m(s):
+                return (100.0 / s) / 60.0 if s and s > 0 else None
+            y_pace = [_pace_100m(v) for v in speed]
+            fig.add_trace(go.Scatter(x=xs, y=y_pace, mode="lines", name="Pace", line=dict(color="#dc2626", width=2)))
+            fig.update_yaxes(title_text="Pace (min/100m)")
+
+        fig.update_xaxes(title_text="Minutes")
+        fig.update_layout(height=420, margin=dict(l=50, r=50, t=30, b=45), legend=dict(orientation="h"))
+
+        all_notes = " ".join(n for n in (cache_note, notes) if n)
+        fig_json = fig.to_json() if fig.data else None
+        has_power = any(v is not None for v in power)
+
+        # Build athlete short name for filename
+        athlete_short = ""
+        if athlete and athlete.name:
+            name_parts = athlete.name.strip().split()
+            if len(name_parts) >= 2:
+                athlete_short = name_parts[0][0] + name_parts[-1]
+            elif name_parts:
+                athlete_short = name_parts[0]
+
+        return templates.TemplateResponse(
+            "partials/workout_trace.html",
+            {
+                "request": request,
+                "error": None,
+                "fig_json": fig_json,
+                "title": title,
+                "notes": all_notes or None,
+                "target_athlete_id": target_athlete_id,
+                "sport": sport,
+                "explorer_workout": wid,
+                "has_power": has_power,
+                "athlete_short": athlete_short,
             },
         )
 
@@ -2796,6 +3237,289 @@ def create_app() -> FastAPI:
                 "prog_id": prog_id,
             },
         )
+
+    # ---- Public Rankings Dashboard ----
+
+    RANKING_CATEGORIES = {
+        13: "World Rankings — Men",
+        14: "World Rankings — Women",
+        15: "WTCS Rankings — Men",
+        16: "WTCS Rankings — Women",
+    }
+    WTCS_CATEGORIES = {15, 16}
+
+    @app.get("/rankings")
+    def rankings_page(request: Request):
+        tri_engine = get_triathlon_engine()
+        countries = []
+        if tri_engine:
+            with tri_engine.connect() as conn:
+                try:
+                    with conn.begin_nested():
+                        rows = conn.execute(text("""
+                            SELECT DISTINCT a.country
+                            FROM athlete a
+                            JOIN athlete_rankings ar ON a.athlete_id = ar.athlete_id
+                            WHERE a.country IS NOT NULL AND a.country != ''
+                            ORDER BY a.country
+                        """)).fetchall()
+                        countries = [r[0] for r in rows]
+                except Exception:
+                    countries = []
+        return templates.TemplateResponse("rankings.html", {
+            "request": request,
+            "categories": RANKING_CATEGORIES,
+            "countries": countries,
+            "default_cat_id": 13,
+        })
+
+    @app.get("/partials/rankings_table", response_class=HTMLResponse)
+    def partial_rankings_table(
+        request: Request,
+        cat_id: int = 13,
+        country: str = "",
+        search: str = "",
+        page: int = 1,
+        per_page: int = 50,
+    ):
+        tri_engine = get_triathlon_engine()
+        if not tri_engine:
+            return HTMLResponse("<p>Triathlon database not configured.</p>")
+
+        with tri_engine.connect() as conn:
+            # Full leaderboard for rank-drop simulation (unfiltered)
+            full_lb = conn.execute(text("""
+                WITH cd AS (
+                    SELECT MAX(retrieved_at) AS latest FROM athlete_rankings
+                    WHERE ranking_cat_id = :cat_id
+                )
+                SELECT ar.athlete_id, ar.total_points
+                FROM athlete_rankings ar JOIN cd ON ar.retrieved_at = cd.latest
+                WHERE ar.ranking_cat_id = :cat_id
+                ORDER BY ar.total_points DESC
+            """), {"cat_id": cat_id}).fetchall()
+            all_pts = [float(r[1] or 0) for r in full_lb]
+
+            # Filtered + paginated query
+            filters = ["ar.ranking_cat_id = :cat_id"]
+            params: dict = {"cat_id": cat_id}
+            if country:
+                filters.append("a.country = :country")
+                params["country"] = country
+            if search:
+                filters.append("ar.athlete_name ILIKE :search")
+                params["search"] = f"%{search}%"
+
+            where = " AND ".join(filters)
+
+            # Count total
+            count_sql = f"""
+                WITH cd AS (
+                    SELECT MAX(retrieved_at) AS latest FROM athlete_rankings
+                    WHERE ranking_cat_id = :cat_id
+                )
+                SELECT COUNT(*)
+                FROM athlete_rankings ar
+                JOIN cd ON ar.retrieved_at = cd.latest
+                JOIN athlete a ON ar.athlete_id = a.athlete_id
+                WHERE {where}
+            """
+            total_count = conn.execute(text(count_sql), params).scalar()
+
+            # Paginated rows
+            offset = (page - 1) * per_page
+            params["limit"] = per_page
+            params["offset"] = offset
+            data_sql = f"""
+                WITH cd AS (
+                    SELECT MAX(retrieved_at) AS latest FROM athlete_rankings
+                    WHERE ranking_cat_id = :cat_id
+                )
+                SELECT ar.athlete_id, ar.athlete_name, ar.rank_position,
+                       ar.total_points, ar.events_current_period,
+                       ar.events_previous_period, a.country
+                FROM athlete_rankings ar
+                JOIN cd ON ar.retrieved_at = cd.latest
+                JOIN athlete a ON ar.athlete_id = a.athlete_id
+                WHERE {where}
+                ORDER BY ar.rank_position
+                LIMIT :limit OFFSET :offset
+            """
+            rows = [dict(r) for r in conn.execute(text(data_sql), params).mappings().all()]
+
+            # At-risk computation for this page's athletes
+            page_athlete_ids = [r["athlete_id"] for r in rows]
+            at_risk: dict[int, dict] = {}
+            event_counts: dict[int, dict] = {}  # {athlete_id: {curr: n, prev: n}}
+            if page_athlete_ids:
+                try:
+                    with conn.begin_nested():
+                        bd_rows = conn.execute(text("""
+                            SELECT athlete_id, event_finish_date, points, period, included
+                            FROM athlete_ranking_breakdown
+                            WHERE athlete_id = ANY(:ids)
+                              AND ranking_cat_id = :cat_id
+                        """), {"ids": page_athlete_ids, "cat_id": cat_id}).mappings().all()
+                except Exception:
+                    bd_rows = []
+
+                today = date.today()
+                cutoff_2w = today + timedelta(days=14)
+                cutoff_1m = today + timedelta(days=30)
+                cutoff_3m = today + timedelta(days=91)
+
+                for bd in bd_rows:
+                    aid = bd["athlete_id"]
+                    is_included = bd.get("included", True)
+                    period = bd.get("period", 1)
+
+                    # Count included events per period
+                    if is_included:
+                        if aid not in event_counts:
+                            event_counts[aid] = {"curr": 0, "prev": 0}
+                        if period == 1:
+                            event_counts[aid]["curr"] += 1
+                        else:
+                            event_counts[aid]["prev"] += 1
+
+                    # At-risk: only period 2 included events
+                    if period == 2 and is_included:
+                        if aid not in at_risk:
+                            at_risk[aid] = {"r2w": 0, "r1m": 0, "r3m": 0}
+                        efd = bd["event_finish_date"]
+                        pts = float(bd["points"] or 0)
+                        if not efd:
+                            continue
+                        expiry = efd + timedelta(days=730)
+                        if today <= expiry <= cutoff_2w:
+                            at_risk[aid]["r2w"] += pts
+                        if today <= expiry <= cutoff_1m:
+                            at_risk[aid]["r1m"] += pts
+                        if today <= expiry <= cutoff_3m:
+                            at_risk[aid]["r3m"] += pts
+
+                # Backfill curr/prev event counts into rows where NULL
+                for r in rows:
+                    aid = r["athlete_id"]
+                    if r.get("events_current_period") is None and aid in event_counts:
+                        r["events_current_period"] = event_counts[aid]["curr"]
+                    if r.get("events_previous_period") is None and aid in event_counts:
+                        r["events_previous_period"] = event_counts[aid]["prev"]
+
+            # Rank-drop simulation
+            drops: dict[int, dict] = {}
+            for r in rows:
+                aid = r["athlete_id"]
+                cur_pts = float(r["total_points"] or 0)
+                cur_rank = sum(1 for p in all_pts if p > cur_pts) + 1
+                risk = at_risk.get(aid, {})
+                d = {}
+                for suffix in ("2w", "1m", "3m"):
+                    lost = risk.get(f"r{suffix}", 0)
+                    if lost:
+                        new_pts = cur_pts - lost
+                        new_rank = sum(1 for p in all_pts if p > new_pts) + 1
+                        d[suffix] = new_rank - cur_rank
+                    else:
+                        d[suffix] = 0
+                drops[aid] = d
+
+            # Weekly change: compare current rank to previous week's snapshot
+            changes: dict[int, int | None] = {}
+            try:
+                prev_week = conn.execute(text("""
+                    SELECT DISTINCT retrieved_at FROM athlete_rankings
+                    WHERE ranking_cat_id = :cat_id
+                      AND retrieved_at < (SELECT MAX(retrieved_at) FROM athlete_rankings WHERE ranking_cat_id = :cat_id)
+                    ORDER BY retrieved_at DESC LIMIT 1
+                """), {"cat_id": cat_id}).scalar()
+            except Exception:
+                prev_week = None
+
+            if prev_week:
+                prev_rows = conn.execute(text("""
+                    SELECT athlete_id, rank_position
+                    FROM athlete_rankings
+                    WHERE ranking_cat_id = :cat_id AND retrieved_at = :prev_date
+                """), {"cat_id": cat_id, "prev_date": prev_week}).fetchall()
+                prev_ranks = {r[0]: r[1] for r in prev_rows}
+                for r in rows:
+                    aid = r["athlete_id"]
+                    old_rank = prev_ranks.get(aid)
+                    if old_rank is not None:
+                        changes[aid] = old_rank - r["rank_position"]  # positive = moved up
+                    else:
+                        changes[aid] = None  # new entry
+
+        total_pages = max(1, math.ceil(total_count / per_page))
+        is_wtcs = cat_id in WTCS_CATEGORIES
+        return templates.TemplateResponse("partials/rankings_table.html", {
+            "request": request,
+            "athletes": rows,
+            "at_risk": at_risk,
+            "drops": drops,
+            "changes": changes,
+            "event_counts": event_counts,
+            "is_wtcs": is_wtcs,
+            "cat_id": cat_id,
+            "page": page,
+            "per_page": per_page,
+            "total_count": total_count,
+            "total_pages": total_pages,
+            "country": country,
+            "search": search,
+        })
+
+    @app.get("/partials/rankings_breakdown/{cat_id}/{athlete_id}", response_class=HTMLResponse)
+    def partial_rankings_breakdown(request: Request, cat_id: int, athlete_id: int):
+        tri_engine = get_triathlon_engine()
+        if not tri_engine:
+            return HTMLResponse("<p>Triathlon database not configured.</p>")
+
+        with tri_engine.connect() as conn:
+            try:
+                with conn.begin_nested():
+                    rows = conn.execute(text("""
+                        SELECT event_id, event_title, event_finish_date, points,
+                               period, position, included
+                        FROM athlete_ranking_breakdown
+                        WHERE athlete_id = :aid AND ranking_cat_id = :cat_id
+                        ORDER BY period, points DESC
+                    """), {"aid": athlete_id, "cat_id": cat_id}).mappings().all()
+            except Exception:
+                rows = []
+
+            name_row = conn.execute(text("""
+                SELECT athlete_name FROM athlete_rankings
+                WHERE athlete_id = :aid AND ranking_cat_id = :cat_id
+                ORDER BY retrieved_at DESC LIMIT 1
+            """), {"aid": athlete_id, "cat_id": cat_id}).fetchone()
+
+        today = date.today()
+        period1 = []
+        period2 = []
+        for r in rows:
+            entry = dict(r)
+            if r["event_finish_date"]:
+                entry["expiry"] = r["event_finish_date"] + timedelta(days=730)
+                entry["days_to_expiry"] = (entry["expiry"] - today).days
+            else:
+                entry["expiry"] = None
+                entry["days_to_expiry"] = None
+            if r["period"] == 1:
+                period1.append(entry)
+            else:
+                period2.append(entry)
+
+        is_wtcs = cat_id in WTCS_CATEGORIES
+        return templates.TemplateResponse("partials/rankings_athlete_detail.html", {
+            "request": request,
+            "athlete_name": name_row[0] if name_row else f"Athlete {athlete_id}",
+            "athlete_id": athlete_id,
+            "period1": period1,
+            "period2": period2,
+            "is_wtcs": is_wtcs,
+        })
 
     return app
 

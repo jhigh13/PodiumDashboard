@@ -1,0 +1,129 @@
+<div style="background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:16px; margin:8px 0;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+    <h4 style="margin:0; font-size:15px;">{{ athlete_name }}</h4>
+    <button class="btn secondary" style="font-size:12px; padding:4px 10px;"
+      onclick="this.closest('tr').style.display='none'">Close</button>
+  </div>
+
+  {% if is_wtcs %}
+  {# WTCS: single-season scoring — show all events in one flat table #}
+  {% set all_events = period1 + period2 %}
+  {% if all_events %}
+  <table style="font-size:13px;">
+    <thead>
+      <tr>
+        <th>Event</th>
+        <th style="text-align:center">Date</th>
+        <th style="text-align:center">Position</th>
+        <th style="text-align:right">Points</th>
+        <th style="text-align:center">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in all_events %}
+      <tr{% if not e.included %} style="opacity:0.5"{% endif %}>
+        <td>{{ e.event_title or "—" }}</td>
+        <td style="text-align:center">{{ e.event_finish_date.strftime('%b %d, %Y') if e.event_finish_date else "—" }}</td>
+        <td style="text-align:center">{{ e.position or "—" }}</td>
+        <td style="text-align:right">{{ "{:,.1f}".format(e.points) if e.points else "—" }}</td>
+        <td style="text-align:center">
+          {% if e.included %}
+          <span class="badge green">Counted</span>
+          {% else %}
+          <span class="badge gray">Excluded</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted" style="text-align:center; font-size:13px;">No breakdown data available for this athlete.</p>
+  {% endif %}
+
+  {% else %}
+  {# World Rankings: rolling 2-year window with current/previous periods #}
+  {% if period1 %}
+  <h5 style="margin:8px 0 4px; font-size:13px; color:#166534;">Current Period (0–1 years)</h5>
+  <table style="font-size:13px; margin-bottom:12px;">
+    <thead>
+      <tr>
+        <th>Event</th>
+        <th style="text-align:center">Date</th>
+        <th style="text-align:center">Position</th>
+        <th style="text-align:right">Points</th>
+        <th style="text-align:center">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in period1 %}
+      <tr{% if not e.included %} style="opacity:0.5" {% endif %}>
+        <td>{{ e.event_title or "—" }}</td>
+        <td style="text-align:center">{{ e.event_finish_date.strftime('%b %d, %Y') if e.event_finish_date else "—" }}
+        </td>
+        <td style="text-align:center">{{ e.position or "—" }}</td>
+        <td style="text-align:right">{{ "{:,.1f}".format(e.points) if e.points else "—" }}</td>
+        <td style="text-align:center">
+          {% if e.included %}
+          <span class="badge green">Counted</span>
+          {% else %}
+          <span class="badge gray">Excluded</span>
+          {% endif %}
+        </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if period2 %}
+  <h5 style="margin:8px 0 4px; font-size:13px; color:#d93025;">Previous Period (1–2 years) — Points At Risk</h5>
+  <table style="font-size:13px;">
+    <thead>
+      <tr>
+        <th>Event</th>
+        <th style="text-align:center">Date</th>
+        <th style="text-align:center">Position</th>
+        <th style="text-align:right">Points</th>
+        <th style="text-align:center">Expires</th>
+        <th style="text-align:center">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in period2 %}
+      <tr{% if not e.included %} style="opacity:0.5" {% elif e.days_to_expiry is not none and e.days_to_expiry <=91 %}
+        style="background:#fee2e2" {% endif %}>
+        <td>{{ e.event_title or "—" }}</td>
+        <td style="text-align:center">{{ e.event_finish_date.strftime('%b %d, %Y') if e.event_finish_date else "—" }}
+        </td>
+        <td style="text-align:center">{{ e.position or "—" }}</td>
+        <td style="text-align:right">{{ "{:,.1f}".format(e.points) if e.points else "—" }}</td>
+        <td style="text-align:center">
+          {% if e.expiry %}
+          {% if e.days_to_expiry <= 14 %} <span class="badge red">{{ e.days_to_expiry }}d</span>
+            {% elif e.days_to_expiry <= 91 %} <span class="badge yellow">{{ e.days_to_expiry }}d</span>
+              {% else %}
+              <span class="badge gray">{{ e.days_to_expiry }}d</span>
+              {% endif %}
+              {% else %}
+              —
+              {% endif %}
+        </td>
+        <td style="text-align:center">
+          {% if e.included %}
+          <span class="badge green">Counted</span>
+          {% else %}
+          <span class="badge gray">Excluded</span>
+          {% endif %}
+        </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if not period1 and not period2 %}
+  <p class="muted" style="text-align:center; font-size:13px;">No breakdown data available for this athlete.</p>
+  {% endif %}
+  {% endif %}
+</div>
