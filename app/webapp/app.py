@@ -3520,10 +3520,102 @@ def create_app() -> FastAPI:
             "request": request,
             "athlete_name": name_row[0] if name_row else f"Athlete {athlete_id}",
             "athlete_id": athlete_id,
+            "cat_id": cat_id,
             "period1": period1,
             "period2": period2,
             "is_wtcs": is_wtcs,
         })
+
+    @app.get("/partials/rankings_rank_trend/{cat_id}/{athlete_id}", response_class=HTMLResponse)
+    def partial_rankings_rank_trend(request: Request, cat_id: int, athlete_id: int):
+        import plotly.graph_objects as go
+        import plotly.utils
+
+        tri_engine = get_triathlon_engine()
+        if not tri_engine:
+            return HTMLResponse("<p>Triathlon database not configured.</p>")
+
+        with tri_engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT ranking_date, rank_position
+                FROM computed_weekly_rankings
+                WHERE athlete_id = :aid AND ranking_cat_id = :cat_id
+                ORDER BY ranking_date
+            """), {"aid": athlete_id, "cat_id": cat_id}).fetchall()
+
+        if not rows:
+            return HTMLResponse(
+                '<p class="muted" style="text-align:center; font-size:13px; padding:12px 0;">'
+                'No historical ranking data available for this athlete.</p>'
+            )
+
+        dates = [r[0].isoformat() for r in rows]
+        ranks = [r[1] for r in rows]
+
+        # Default visible range: last 12 months
+        from datetime import date, timedelta
+        range_end = date.today()
+        range_start = range_end - timedelta(days=365)
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=dates,
+            y=ranks,
+            mode="lines+markers",
+            marker=dict(size=4, color="#2563eb"),
+            line=dict(color="#2563eb", width=2),
+            hovertemplate="<b>%{x}</b><br>Rank: %{y}<extra></extra>",
+        ))
+
+        fig.update_layout(
+            margin=dict(l=40, r=20, t=10, b=40),
+            height=220,
+            paper_bgcolor="transparent",
+            plot_bgcolor="transparent",
+            yaxis=dict(
+                autorange="reversed",
+                title="Rank",
+                title_font=dict(size=11),
+                tickfont=dict(size=10),
+                gridcolor="#e5e7eb",
+            ),
+            xaxis=dict(
+                type="date",
+                range=[range_start.isoformat(), range_end.isoformat()],
+                rangeslider=dict(visible=True, thickness=0.08),
+                rangeselector=dict(
+                    buttons=[
+                        dict(count=6, label="6M", step="month", stepmode="backward"),
+                        dict(count=1, label="1Y", step="year", stepmode="backward"),
+                        dict(count=2, label="2Y", step="year", stepmode="backward"),
+                        dict(step="all", label="All"),
+                    ],
+                    font=dict(size=11),
+                    bgcolor="#f1f5f9",
+                    activecolor="#2563eb",
+                ),
+                tickfont=dict(size=10),
+                gridcolor="#e5e7eb",
+            ),
+            font=dict(family="inherit"),
+            showlegend=False,
+        )
+
+        chart_json = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
+        div_id = f"rank-trend-{athlete_id}"
+        html = f"""
+<div style="margin-top:16px;">
+  <h5 style="margin:0 0 8px; font-size:13px; color:#374151;">Rank Over Time</h5>
+  <div id="{div_id}"></div>
+</div>
+<script>
+  (function() {{
+    var fig = {chart_json};
+    Plotly.react('{div_id}', fig.data, fig.layout, {{responsive: true, displayModeBar: false}});
+  }})();
+</script>
+"""
+        return HTMLResponse(html)
 
     return app
 

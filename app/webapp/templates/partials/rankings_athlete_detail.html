@@ -5,10 +5,19 @@
       onclick="this.closest('tr').style.display='none'">Close</button>
   </div>
 
+  {# Rank trend chart — lazy loaded #}
+  <div hx-get="/partials/rankings_rank_trend/{{ cat_id }}/{{ athlete_id }}"
+       hx-trigger="load"
+       hx-target="this"
+       hx-swap="outerHTML">
+    <p class="muted" style="font-size:12px; text-align:center; padding:8px 0;">Loading rank trend…</p>
+  </div>
+
   {% if is_wtcs %}
   {# WTCS: single-season scoring — show all events in one flat table #}
   {% set all_events = period1 + period2 %}
   {% if all_events %}
+  <h5 style="margin:16px 0 4px; font-size:13px; color:#374151;">Event Breakdown</h5>
   <table style="font-size:13px;">
     <thead>
       <tr>
@@ -43,6 +52,10 @@
 
   {% else %}
   {# World Rankings: rolling 2-year window with current/previous periods #}
+  {% if period1 or period2 %}
+  <h5 style="margin:16px 0 4px; font-size:13px; color:#374151;">Event Breakdown</h5>
+  {% endif %}
+
   {% if period1 %}
   <h5 style="margin:8px 0 4px; font-size:13px; color:#166534;">Current Period (0–1 years)</h5>
   <table style="font-size:13px; margin-bottom:12px;">
