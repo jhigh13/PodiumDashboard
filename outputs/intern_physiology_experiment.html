@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Intern Project: Pre-Race Physiology and Race Performance</title>
+    <style>
+        body {
+            font-family: Segoe UI, Calibri, Arial, sans-serif;
+            max-width: 850px;
+            margin: 40px auto;
+            padding: 0 20px;
+            line-height: 1.6;
+            color: #222;
+            font-size: 14px;
+        }
+
+        h1 {
+            color: #1a3a5c;
+            border-bottom: 2px solid #1a3a5c;
+            padding-bottom: 8px;
+        }
+
+        h2 {
+            color: #2c5f8a;
+            margin-top: 32px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 4px;
+        }
+
+        h3 {
+            color: #3a7ab5;
+            margin-top: 24px;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 12px 0;
+        }
+
+        th,
+        td {
+            border: 1px solid #ccc;
+            padding: 8px 12px;
+            text-align: left;
+        }
+
+        th {
+            background: #f0f4f8;
+            font-weight: 600;
+        }
+
+        tr:nth-child(even) {
+            background: #fafbfc;
+        }
+
+        code {
+            background: #f4f4f4;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-size: 13px;
+        }
+
+        pre {
+            background: #f8f8f8;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 12px;
+            overflow-x: auto;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+        }
+
+        blockquote {
+            border-left: 4px solid #3a7ab5;
+            margin: 16px 0;
+            padding: 8px 16px;
+            background: #f0f7ff;
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid #ddd;
+            margin: 24px 0;
+        }
+
+        strong {
+            color: #1a3a5c;
+        }
+
+        ul,
+        ol {
+            padding-left: 24px;
+        }
+
+        li {
+            margin-bottom: 4px;
+        }
+
+        @media print {
+            body {
+                margin: 20px;
+                font-size: 12px;
+            }
+
+            pre {
+                font-size: 11px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <p>Pre-Race Physiology → Race Performance</p>
+    <h2>Goal</h2>
+    <p>Investigate whether an athlete's physiology and training load in the weeks <strong>before</strong> a race predict
+        their race outcome. We want to answer questions like:</p>
+    <ul>
+        <li>Does higher average HRV in the 2 weeks before a race correlate with a better finish position?</li>
+        <li>Does sleeping more (or less) before a race matter?</li>
+        <li>Is there a "sweet spot" for training load (TSS) before a race?</li>
+        <li>Can we build a simple model that predicts finish position from pre-race metrics?</li>
+    </ul>
+    <hr />
+    <h2>Background</h2>
+    <p>We track daily metrics for each athlete from TrainingPeaks:</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Metric</th>
+                <th>What it is</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>HRV</strong></td>
+                <td>Heart Rate Variability — higher generally means better recovery</td>
+            </tr>
+            <tr>
+                <td><strong>RHR</strong></td>
+                <td>Resting Heart Rate — lower generally means better fitness</td>
+            </tr>
+            <tr>
+                <td><strong>Sleep hours</strong></td>
+                <td>Self-reported sleep duration</td>
+            </tr>
+            <tr>
+                <td><strong>TSS</strong></td>
+                <td>Training Stress Score per workout — how hard a single session was</td>
+            </tr>
+        </tbody>
+    </table>
+    <blockquote>
+        <p><strong>Note on CTL / ATL / TSB:</strong> These are powerful training load metrics (fitness, fatigue, form)
+            but they are currently <strong>empty</strong> for most athletes in our database because TrainingPeaks
+            restricts them to premium accounts. The export includes the columns, but expect them to be null. Focus on
+            the metrics that <em>do</em> have data: <strong>HRV, RHR, sleep, TSS, workout count, and total training
+                hours per day</strong>. Training hours and workout count are excellent proxies for training load — every
+            athlete has them.</p>
+    </blockquote>
+    <p>We also have race results from World Triathlon with finish position, split times, and event metadata.</p>
+    <hr />
+    <h2>The Two Tables</h2>
+    <p>You'll work with two CSV files exported from our database.</p>
+    <h3>Table 1: <code>races.csv</code> — One row per race</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Column</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>athlete_id</code></td>
+                <td>Unique athlete identifier</td>
+            </tr>
+            <tr>
+                <td><code>athlete_name</code></td>
+                <td>Athlete's name</td>
+            </tr>
+            <tr>
+                <td><code>event_date</code></td>
+                <td>Date of the race (YYYY-MM-DD)</td>
+            </tr>
+            <tr>
+                <td><code>event_name</code></td>
+                <td>Name of the race (e.g., "2025 World Cup Viña del Mar")</td>
+            </tr>
+            <tr>
+                <td><code>race_category</code></td>
+                <td>Event tier: <code>wtcs</code>, <code>worldcup</code>, <code>continental_cup</code>,
+                    <code>other</code></td>
+            </tr>
+            <tr>
+                <td><code>distance</code></td>
+                <td>Race distance: <code>sprint</code>, <code>standard</code>, <code>super_sprint</code>, etc.</td>
+            </tr>
+            <tr>
+                <td><code>finish_status</code></td>
+                <td><code>FINISH</code>, <code>DNF</code>, <code>DNS</code>, <code>DSQ</code></td>
+            </tr>
+            <tr>
+                <td><code>finish_position</code></td>
+                <td>Integer finish place (null if DNF/DNS/DSQ)</td>
+            </tr>
+            <tr>
+                <td><code>field_size</code></td>
+                <td>Number of athletes who started the race</td>
+            </tr>
+            <tr>
+                <td><code>finish_pct</code></td>
+                <td><code>finish_position / field_size</code> — normalized so you can compare across field sizes</td>
+            </tr>
+        </tbody>
+    </table>
+    <h3>Table 2: <code>daily_metrics.csv</code> — One row per athlete per day</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Column</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>athlete_id</code></td>
+                <td>Unique athlete identifier</td>
+            </tr>
+            <tr>
+                <td><code>date</code></td>
+                <td>Calendar date (YYYY-MM-DD)</td>
+            </tr>
+            <tr>
+                <td><code>sleep_hours</code></td>
+                <td>Hours of sleep</td>
+            </tr>
+            <tr>
+                <td><code>rhr</code></td>
+                <td>Resting heart rate (bpm)</td>
+            </tr>
+            <tr>
+                <td><code>hrv</code></td>
+                <td>Heart rate variability</td>
+            </tr>
+            <tr>
+                <td><code>ctl</code></td>
+                <td>Chronic Training Load (fitness)</td>
+            </tr>
+            <tr>
+                <td><code>atl</code></td>
+                <td>Acute Training Load (fatigue)</td>
+            </tr>
+            <tr>
+                <td><code>tsb</code></td>
+                <td>Training Stress Balance (form = CTL − ATL)</td>
+            </tr>
+            <tr>
+                <td><code>num_workouts</code></td>
+                <td>Number of workouts that day</td>
+            </tr>
+            <tr>
+                <td><code>total_tss</code></td>
+                <td>Sum of TSS across all workouts that day</td>
+            </tr>
+            <tr>
+                <td><code>total_duration_hrs</code></td>
+                <td>Total training hours that day</td>
+            </tr>
+        </tbody>
+    </table>
+    <hr />
+    <h2>Your Task — Step by Step</h2>
+    <h3>Phase 1: Data Exploration</h3>
+    <ol>
+        <li><strong>Load the CSVs</strong> into a Jupyter notebook using <code>pandas</code>.</li>
+        <li><strong>Filter to Blake Bullard</strong>: <code>races = races[races["athlete_id"] == 13]</code> and same for
+            metrics. Start with one athlete.</li>
+        <li><strong>Inspect the data</strong>: <code>.head()</code>, <code>.describe()</code>, <code>.info()</code>,
+            check for nulls.</li>
+        <li><strong>Visualize distributions</strong>: histograms of HRV, sleep, RHR, finish_position, daily training
+            hours.</li>
+        <li><strong>Filter</strong>: Remove rows where <code>finish_status != 'FINISH'</code> (DNFs aren't useful for
+            position analysis).</li>
+        <li><strong>Plot his race timeline</strong>: finish_position over time (x=event_date, y=finish_position). Does
+            he have good and bad stretches?</li>
+    </ol>
+    <h3>Phase 2: Build the Analysis Dataset</h3>
+    <p>This is the key step — you need to <strong>join</strong> the two tables by computing pre-race averages.</p>
+    <p>For each race, compute the average of each daily metric over a <strong>lookback window</strong> (e.g., 14 days
+        before the race). Copy this into a notebook cell and run it:</p>
+    <pre><code class="language-python">import pandas as pd
+
+races = pd.read_csv(&quot;races.csv&quot;, parse_dates=[&quot;event_date&quot;])
+metrics = pd.read_csv(&quot;daily_metrics.csv&quot;, parse_dates=[&quot;date&quot;])
+
+# Filter to Blake Bullard
+races = races[races[&quot;athlete_id&quot;] == 13].copy()
+metrics = metrics[metrics[&quot;athlete_id&quot;] == 13].copy()
+
+# Only finished races
+races = races[races[&quot;finish_status&quot;] == &quot;FINISH&quot;].copy()
+
+lookback_days = 14  # Try 7, 14, 21, 28 later
+
+rows = []
+for _, race in races.iterrows():
+    window_start = race[&quot;event_date&quot;] - pd.Timedelta(days=lookback_days)
+    window_end = race[&quot;event_date&quot;] - pd.Timedelta(days=1)  # Don't include race day
+
+    # Filter metrics for this athlete in this window
+    mask = (
+        (metrics[&quot;athlete_id&quot;] == race[&quot;athlete_id&quot;])
+        &amp; (metrics[&quot;date&quot;] &gt;= window_start)
+        &amp; (metrics[&quot;date&quot;] &lt;= window_end)
+    )
+    window = metrics[mask]
+
+    if len(window) &lt; 3:  # Skip if too little data
+        continue
+
+    rows.append({
+        &quot;athlete_id&quot;: race[&quot;athlete_id&quot;],
+        &quot;event_date&quot;: race[&quot;event_date&quot;],
+        &quot;event_name&quot;: race[&quot;event_name&quot;],
+        &quot;race_category&quot;: race[&quot;race_category&quot;],
+        &quot;finish_position&quot;: race[&quot;finish_position&quot;],
+        &quot;finish_pct&quot;: race[&quot;finish_pct&quot;],
+        &quot;field_size&quot;: race[&quot;field_size&quot;],
+        # Pre-race averages
+        &quot;avg_hrv&quot;: window[&quot;hrv&quot;].mean(),
+        &quot;avg_rhr&quot;: window[&quot;rhr&quot;].mean(),
+        &quot;avg_sleep&quot;: window[&quot;sleep_hours&quot;].mean(),
+        &quot;avg_daily_tss&quot;: window[&quot;total_tss&quot;].mean(),
+        &quot;avg_daily_hours&quot;: window[&quot;total_duration_hrs&quot;].mean(),
+        &quot;avg_num_workouts&quot;: window[&quot;num_workouts&quot;].mean(),
+        &quot;days_with_data&quot;: len(window),
+    })
+
+analysis_df = pd.DataFrame(rows)
+</code></pre>
+    <h3>Phase 3: Visual Analysis</h3>
+    <p>Create scatter plots and see if patterns emerge. Copy and run:</p>
+    <pre><code class="language-python">import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Scatter: HRV vs finish percentage
+sns.scatterplot(data=analysis_df, x=&quot;avg_hrv&quot;, y=&quot;finish_pct&quot;)
+plt.xlabel(&quot;Avg HRV (14d before race)&quot;)
+plt.ylabel(&quot;Finish Position %  (lower = better)&quot;)
+plt.title(&quot;Does higher HRV predict better race results?&quot;)
+plt.gca().invert_yaxis()  # Lower % = better
+plt.show()
+</code></pre>
+    <p>Repeat for: <code>avg_sleep</code>, <code>avg_rhr</code>, <code>avg_daily_tss</code>,
+        <code>avg_daily_hours</code>, <code>avg_num_workouts</code>.</p>
+    <p><strong>Correlation matrix</strong>:</p>
+    <pre><code class="language-python">cols = [&quot;finish_pct&quot;, &quot;avg_hrv&quot;, &quot;avg_rhr&quot;, &quot;avg_sleep&quot;, &quot;avg_daily_tss&quot;, &quot;avg_daily_hours&quot;, &quot;avg_num_workouts&quot;]
+sns.heatmap(analysis_df[cols].corr(), annot=True, cmap=&quot;coolwarm&quot;, center=0)
+plt.title(&quot;Correlation Matrix&quot;)
+plt.show()
+</code></pre>
+    <h3>Phase 4: Regression</h3>
+    <p>Try a simple linear regression. Copy and run:</p>
+    <pre><code class="language-python">from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import LeaveOneOut
+from sklearn.metrics import mean_absolute_error
+import numpy as np
+
+features = [&quot;avg_hrv&quot;, &quot;avg_rhr&quot;, &quot;avg_sleep&quot;, &quot;avg_daily_tss&quot;, &quot;avg_daily_hours&quot;, &quot;avg_num_workouts&quot;]
+X = analysis_df[features].dropna()
+y = analysis_df.loc[X.index, &quot;finish_pct&quot;]
+
+# Leave-one-out cross validation (good for small datasets)
+loo = LeaveOneOut()
+predictions = []
+actuals = []
+
+for train_idx, test_idx in loo.split(X):
+    model = LinearRegression()
+    model.fit(X.iloc[train_idx], y.iloc[train_idx])
+    pred = model.predict(X.iloc[test_idx])
+    predictions.append(pred[0])
+    actuals.append(y.iloc[test_idx].values[0])
+
+print(f&quot;MAE: {mean_absolute_error(actuals, predictions):.3f}&quot;)
+print(f&quot;Correlation: {np.corrcoef(actuals, predictions)[0,1]:.3f}&quot;)
+</code></pre>
+    <hr />
+    <h2>Important Considerations</h2>
+    <h3>Use <code>finish_pct</code> not <code>finish_position</code></h3>
+    <p>Finishing 5th out of 10 is very different from 5th out of 60. Dividing position by field size normalizes this.
+        Always use <code>finish_pct</code> as your target variable.</p>
+    <h3>Try multiple lookback windows</h3>
+    <p>Don't just use 14 days. Try 7, 14, 21, 28 and see which window has the strongest correlation. This is a real
+        finding — does recent sleep matter more than a month of sleep?</p>
+    <h3>Watch out for confounders</h3>
+    <ul>
+        <li><strong>Athlete ability</strong>: A great athlete might have good HRV <em>and</em> good results, but one
+            doesn't cause the other — both come from being fit. Consider analyzing <strong>within-athlete</strong>
+            variation (how an athlete's HRV differs from their own average) rather than only across athletes.</li>
+        <li><strong>Race tier</strong>: World-level races have tougher fields. Include <code>race_category</code> as a
+            control variable.</li>
+        <li><strong>Sample size</strong>: With few athletes and races, correlation ≠ causation. Be honest about this in
+            your write-up.</li>
+    </ul>
+    <h3>Within-athlete analysis (stretch goal)</h3>
+    <p>Instead of raw values, compute <strong>deviations from the athlete's own baseline</strong>:</p>
+    <pre><code class="language-python"># Per-athlete z-score
+for col in [&quot;avg_hrv&quot;, &quot;avg_sleep&quot;, &quot;avg_rhr&quot;]:
+    grouped = analysis_df.groupby(&quot;athlete_id&quot;)[col]
+    analysis_df[f&quot;{col}_zscore&quot;] = grouped.transform(lambda x: (x - x.mean()) / x.std())
+</code></pre>
+    <p>This asks: "When <em>this</em> athlete sleeps more than <em>their</em> usual, do <em>they</em> perform better?" —
+        which is a much stronger claim than comparing across athletes.</p>
+    <h3>Training load tapering is your most interesting question</h3>
+    <p>Coaching wisdom says athletes should <strong>taper</strong> before a race — reduce training volume/intensity in
+        the final days while maintaining fitness built up over weeks. Look for this by comparing the athlete's average
+        daily TSS in the <strong>7 days</strong> before a race vs. the <strong>28 days</strong> before. If the ratio is
+        &lt; 1 (they trained less the final week), that's a taper. Does tapering correlate with better results?</p>
+    <pre><code class="language-python"># Compute a simple taper ratio per race
+analysis_df[&quot;taper_ratio&quot;] = analysis_df[&quot;avg_tss_7d&quot;] / analysis_df[&quot;avg_tss_28d&quot;]
+# &lt; 1.0 means they eased off; &gt; 1.0 means they pushed harder
+</code></pre>
+    <p>This requires building the analysis dataset with <em>two</em> lookback windows per race (7d and 28d). It's extra
+        work but it's a much more interesting finding than a simple average.</p>
+    <hr />
+    <h2>Getting Started</h2>
+    <h3>1. Generate the CSV files</h3>
+    <p>Run this from the <code>PodiumDashboard/</code> directory:</p>
+    <pre><code class="language-powershell">python scripts/export_physiology_data.py
+</code></pre>
+    <p>This creates two files in <code>outputs/</code>:
+        - <code>outputs/races.csv</code>
+        - <code>outputs/daily_metrics.csv</code></p>
+    <h3>2. Know your data</h3>
+    <p>Not all athletes have the same coverage. Here's a summary from the latest export:</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Athlete</th>
+                <th>Races</th>
+                <th>Workout-Days</th>
+                <th>HRV-Days</th>
+                <th>Best for…</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Blake Harris</td>
+                <td>24</td>
+                <td>498</td>
+                <td>486</td>
+                <td><strong>Full analysis</strong> (HRV + training + races)</td>
+            </tr>
+            <tr>
+                <td>Blake Bullard</td>
+                <td>16</td>
+                <td>507</td>
+                <td>491</td>
+                <td><strong>Full analysis</strong></td>
+            </tr>
+            <tr>
+                <td>Keller Norland</td>
+                <td>22</td>
+                <td>444</td>
+                <td>0</td>
+                <td>Training load → race only (no physiology)</td>
+            </tr>
+            <tr>
+                <td>Reese Vannerson</td>
+                <td>19</td>
+                <td>508</td>
+                <td>5</td>
+                <td>Training load → race only</td>
+            </tr>
+            <tr>
+                <td>Sullivan Middaugh</td>
+                <td>20</td>
+                <td>48</td>
+                <td>0</td>
+                <td>Races only (limited training data)</td>
+            </tr>
+        </tbody>
+    </table>
+    <p><strong>Start with Blake Bullard (athlete_id=13)</strong> — he has the richest combined data (16 races, 507
+        workout-days, 491 HRV-days). Get the full analysis working for one athlete first, then extend to others. Blake
+        Harris (id=95) is your next best candidate. After that, athletes without HRV can still be analyzed using
+        training load proxies (daily hours, workout count, TSS).</p>
+    <h3>3. Start your notebook</h3>
+    <p>Create a new Jupyter notebook (e.g., <code>notebooks/physiology_experiment.ipynb</code>) and begin with Phase 1.
+    </p>
+    <h3>4. Libraries you'll need</h3>
+    <pre><code class="language-bash">pip install pandas matplotlib seaborn scikit-learn jupyter
+</code></pre>
+    <hr />
+    <h2>Deliverables</h2>
+    <ol>
+        <li>A Jupyter notebook with your analysis (all phases)</li>
+        <li>At least 3 visualizations (scatter plots, correlation matrix, etc.)</li>
+        <li>Answers to: Which lookback window worked best? Which metrics correlated most with finish position? Did the
+            regression model add value over simple correlations?</li>
+    </ol>
+    <hr />
+    <h2>Questions to Think About</h2>
+    <ul>
+        <li>Is 14 days the right lookback? What if the night before matters more than 2 weeks ago?</li>
+        <li>Should you weight recent days more heavily than older days? (Exponential moving average vs. simple average)
+        </li>
+        <li>Does the relationship change by race category? (WTCS vs. Continental Cup)</li>
+        <li>What happens if you add <strong>trends</strong> (is HRV going up or down?) instead of just averages?</li>
+        <li>Could you detect if an athlete is "peaking" vs. "fatigued" before a race?</li>
+        <li>After finishing the analysis for Blake Bullard, do the same patterns hold for Blake Harris? For athletes
+            with only training load data (no HRV)?</li>
+    </ul>
+</body>
+
+</html>
