@@ -3535,13 +3535,19 @@ def create_app() -> FastAPI:
         if not tri_engine:
             return HTMLResponse("<p>Triathlon database not configured.</p>")
 
-        with tri_engine.connect() as conn:
-            rows = conn.execute(text("""
-                SELECT ranking_date, rank_position
-                FROM computed_weekly_rankings
-                WHERE athlete_id = :aid AND ranking_cat_id = :cat_id
-                ORDER BY ranking_date
-            """), {"aid": athlete_id, "cat_id": cat_id}).fetchall()
+        try:
+            with tri_engine.connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT ranking_date, rank_position
+                    FROM computed_weekly_rankings
+                    WHERE athlete_id = :aid AND ranking_cat_id = :cat_id
+                    ORDER BY ranking_date
+                """), {"aid": athlete_id, "cat_id": cat_id}).fetchall()
+        except Exception as e:
+            return HTMLResponse(
+                f'<p class="muted" style="text-align:center; font-size:13px; padding:12px 0;">'
+                f'Chart unavailable: {e}</p>'
+            )
 
         if not rows:
             return HTMLResponse(
