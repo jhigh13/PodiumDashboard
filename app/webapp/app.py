@@ -3555,59 +3555,66 @@ def create_app() -> FastAPI:
                 'No historical ranking data available for this athlete.</p>'
             )
 
-        dates = [r[0].isoformat() for r in rows]
-        ranks = [r[1] for r in rows]
+        try:
+            dates = [r[0].isoformat() for r in rows]
+            ranks = [r[1] for r in rows]
 
-        # Default visible range: last 12 months
-        from datetime import date, timedelta
-        range_end = date.today()
-        range_start = range_end - timedelta(days=365)
+            # Default visible range: last 12 months
+            from datetime import date, timedelta
+            range_end = date.today()
+            range_start = range_end - timedelta(days=365)
 
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=dates,
-            y=ranks,
-            mode="lines+markers",
-            marker=dict(size=4, color="#2563eb"),
-            line=dict(color="#2563eb", width=2),
-            hovertemplate="<b>%{x}</b><br>Rank: %{y}<extra></extra>",
-        ))
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=dates,
+                y=ranks,
+                mode="lines+markers",
+                marker=dict(size=4, color="#2563eb"),
+                line=dict(color="#2563eb", width=2),
+                hovertemplate="<b>%{x}</b><br>Rank: %{y}<extra></extra>",
+            ))
 
-        fig.update_layout(
-            margin=dict(l=40, r=20, t=10, b=40),
-            height=220,
-            paper_bgcolor="transparent",
-            plot_bgcolor="transparent",
-            yaxis=dict(
-                autorange="reversed",
-                title="Rank",
-                title_font=dict(size=11),
-                tickfont=dict(size=10),
-                gridcolor="#e5e7eb",
-            ),
-            xaxis=dict(
-                type="date",
-                range=[range_start.isoformat(), range_end.isoformat()],
-                rangeslider=dict(visible=True, thickness=0.08),
-                rangeselector=dict(
-                    buttons=[
-                        dict(count=6, label="6M", step="month", stepmode="backward"),
-                        dict(count=1, label="1Y", step="year", stepmode="backward"),
-                        dict(count=2, label="2Y", step="year", stepmode="backward"),
-                        dict(step="all", label="All"),
-                    ],
-                    font=dict(size=11),
-                    bgcolor="#f1f5f9",
-                    activecolor="#2563eb",
+            fig.update_layout(
+                margin=dict(l=40, r=20, t=10, b=40),
+                height=220,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                yaxis=dict(
+                    autorange="reversed",
+                    title="Rank",
+                    title_font=dict(size=11),
+                    tickfont=dict(size=10),
+                    gridcolor="#e5e7eb",
                 ),
-                tickfont=dict(size=10),
-                gridcolor="#e5e7eb",
-            ),
-            font=dict(family="inherit"),
-            showlegend=False,
-        )
+                xaxis=dict(
+                    type="date",
+                    range=[range_start.isoformat(), range_end.isoformat()],
+                    rangeslider=dict(visible=True, thickness=0.08),
+                    rangeselector=dict(
+                        buttons=[
+                            dict(count=6, label="6M", step="month", stepmode="backward"),
+                            dict(count=1, label="1Y", step="year", stepmode="backward"),
+                            dict(count=2, label="2Y", step="year", stepmode="backward"),
+                            dict(step="all", label="All"),
+                        ],
+                        font=dict(size=11),
+                        bgcolor="#f1f5f9",
+                        activecolor="#2563eb",
+                    ),
+                    tickfont=dict(size=10),
+                    gridcolor="#e5e7eb",
+                ),
+                font=dict(family="inherit"),
+                showlegend=False,
+            )
 
-        chart_json = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
+            chart_json = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
+        except Exception as e:
+            return HTMLResponse(
+                f'<p class="muted" style="text-align:center; font-size:13px; padding:12px 0;">'
+                f'Chart unavailable: {e}</p>'
+            )
+
         div_id = f"rank-trend-{athlete_id}"
         html = f"""
 <div style="margin-top:16px;">
