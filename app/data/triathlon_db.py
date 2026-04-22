@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app.utils.settings import settings
@@ -39,7 +39,7 @@ def get_triathlon_engine():
     if not url:
         return None
     url = _force_psycopg_driver(url)
-    return create_engine(
+    engine = create_engine(
         url,
         echo=False,
         future=True,
@@ -47,6 +47,16 @@ def get_triathlon_engine():
         pool_recycle=1800,
         connect_args=_ssl_connect_args(url),
     )
+
+    # psycopg v3 + Supabase PgBouncer pooler connections get an empty
+    # search_path, causing "relation does not exist" for unqualified names.
+    # Set it explicitly on every connection checkout.
+    @event.listens_for(engine, "checkout")
+    def _set_search_path(dbapi_conn, conn_record, conn_proxy):
+        with dbapi_conn.cursor() as cursor:
+            cursor.execute("SET search_path = public")
+
+    return engine
 
 
 def get_triathlon_sessionmaker():
