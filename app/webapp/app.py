@@ -3543,11 +3543,21 @@ def create_app() -> FastAPI:
 
         try:
             with tri_engine.connect() as conn:
-                rows = conn.execute(text("""
+                computed_rows = conn.execute(text("""
                     SELECT ranking_date, rank_position
                     FROM computed_weekly_rankings
                     WHERE athlete_id = :aid AND ranking_cat_id = :cat_id
                     ORDER BY ranking_date
+                """), {"aid": athlete_id, "cat_id": cat_id}).fetchall()
+
+                # Last two real snapshots from World Triathlon — always shown as
+                # the chart's tail so the trend line ends at the current rank.
+                real_rows = conn.execute(text("""
+                    SELECT retrieved_at, rank_position
+                    FROM athlete_rankings
+                    WHERE athlete_id = :aid AND ranking_cat_id = :cat_id
+                    ORDER BY retrieved_at DESC
+                    LIMIT 2
                 """), {"aid": athlete_id, "cat_id": cat_id}).fetchall()
         except Exception as e:
             return HTMLResponse(
@@ -3555,15 +3565,26 @@ def create_app() -> FastAPI:
                 f'Chart unavailable: {e}</p>'
             )
 
-        if not rows:
+        # Tail: (oldest_real_date, rank), (newest_real_date, rank) in chronological order
+        tail = sorted(((r[0], r[1]) for r in real_rows), key=lambda x: x[0])
+
+        # Drop any computed rows on/after the earliest real snapshot — real data
+        # supersedes the simulated series from that point forward.
+        if tail:
+            cutoff = tail[0][0]
+            merged = [(r[0], r[1]) for r in computed_rows if r[0] < cutoff] + tail
+        else:
+            merged = [(r[0], r[1]) for r in computed_rows]
+
+        if not merged:
             return HTMLResponse(
                 '<p class="muted" style="text-align:center; font-size:13px; padding:12px 0;">'
                 'No historical ranking data available for this athlete.</p>'
             )
 
         try:
-            dates = [r[0].isoformat() for r in rows]
-            ranks = [r[1] for r in rows]
+            dates = [d.isoformat() for d, _ in merged]
+            ranks = [r for _, r in merged]
 
             # Default visible range: last 12 months
             from datetime import date, timedelta
