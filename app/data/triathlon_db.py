@@ -39,16 +39,13 @@ def get_triathlon_engine():
     if not url:
         return None
     url = _force_psycopg_driver(url)
-    connect_args = _ssl_connect_args(url)
-    # 10-second statement timeout prevents chart queries from hanging on Supabase
-    connect_args["options"] = "-c statement_timeout=10000"
     return create_engine(
         url,
         echo=False,
         future=True,
         pool_pre_ping=True,
         pool_recycle=1800,
-        connect_args=connect_args,
+        connect_args=_ssl_connect_args(url),
     )
 
 
