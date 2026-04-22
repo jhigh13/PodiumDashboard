@@ -3486,8 +3486,14 @@ def create_app() -> FastAPI:
                     rows = conn.execute(text("""
                         SELECT event_id, event_title, event_finish_date, points,
                                period, position, included
-                        FROM athlete_ranking_breakdown
-                        WHERE athlete_id = :aid AND ranking_cat_id = :cat_id
+                        FROM (
+                            SELECT DISTINCT ON (event_id)
+                                event_id, event_title, event_finish_date, points,
+                                period, position, included, retrieved_at
+                            FROM athlete_ranking_breakdown
+                            WHERE athlete_id = :aid AND ranking_cat_id = :cat_id
+                            ORDER BY event_id, retrieved_at DESC
+                        ) latest
                         ORDER BY period, points DESC
                     """), {"aid": athlete_id, "cat_id": cat_id}).mappings().all()
             except Exception:
@@ -3580,7 +3586,7 @@ def create_app() -> FastAPI:
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
                 yaxis=dict(
-                    autorange="reversed",
+                    # Range is set dynamically in JS based on visible x-range
                     title="Rank",
                     title_font=dict(size=11),
                     tickfont=dict(size=10),
@@ -3624,7 +3630,41 @@ def create_app() -> FastAPI:
 <script>
   (function() {{
     var fig = {chart_json};
-    Plotly.react('{div_id}', fig.data, fig.layout, {{responsive: true, displayModeBar: false}});
+    var divId = '{div_id}';
+    Plotly.react(divId, fig.data, fig.layout, {{responsive: true, displayModeBar: false}}).then(function() {{
+      var el = document.getElementById(divId);
+      var xs = fig.data[0].x.map(function(d) {{ return new Date(d).getTime(); }});
+      var ys = fig.data[0].y;
+
+      function fitY(xStart, xEnd) {{
+        var t0 = new Date(xStart).getTime();
+        var t1 = new Date(xEnd).getTime();
+        var visible = [];
+        for (var i = 0; i < xs.length; i++) {{
+          if (xs[i] >= t0 && xs[i] <= t1) visible.push(ys[i]);
+        }}
+        if (!visible.length) visible = ys;
+        var lo = Math.min.apply(null, visible);
+        var hi = Math.max.apply(null, visible);
+        var pad = Math.max(1, Math.ceil((hi - lo) * 0.1));
+        // reversed axis: worse rank (bigger) at bottom, best (1) at top
+        Plotly.relayout(divId, {{'yaxis.range': [hi + pad, Math.max(0, lo - pad)]}});
+      }}
+
+      // Seed initial y-range from the default 1Y window
+      var initRange = (fig.layout.xaxis && fig.layout.xaxis.range) || null;
+      if (initRange) fitY(initRange[0], initRange[1]);
+
+      el.on('plotly_relayout', function(ed) {{
+        if (ed['xaxis.range[0]'] !== undefined && ed['xaxis.range[1]'] !== undefined) {{
+          fitY(ed['xaxis.range[0]'], ed['xaxis.range[1]']);
+        }} else if (ed['xaxis.range'] && ed['xaxis.range'].length === 2) {{
+          fitY(ed['xaxis.range'][0], ed['xaxis.range'][1]);
+        }} else if (ed['xaxis.autorange']) {{
+          fitY(xs[0], xs[xs.length - 1]);
+        }}
+      }});
+    }});
   }})();
 </script>
 """
