@@ -35,8 +35,8 @@ TRIATHLON_DB_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "triathlon-db")
 )
 MODEL_PATHS = {
-    "men": os.path.join(TRIATHLON_DB_ROOT, "models", "bundle_claudev24_men.joblib"),
-    "women": os.path.join(TRIATHLON_DB_ROOT, "models", "bundle_claudev24_women.joblib"),
+    "men": os.path.join(TRIATHLON_DB_ROOT, "models", "bundle_elite_v45.joblib"),
+    "women": os.path.join(TRIATHLON_DB_ROOT, "models", "bundle_elite_v45.joblib"),
 }
 
 
