@@ -3897,8 +3897,14 @@ def create_app() -> FastAPI:
                     rows = conn.execute(text("""
                         SELECT event_id, event_title, event_finish_date, points,
                                period, position, included
-                        FROM athlete_ranking_breakdown
-                        WHERE athlete_id = :aid AND ranking_cat_id = :cat_id
+                        FROM (
+                            SELECT DISTINCT ON (event_id)
+                                event_id, event_title, event_finish_date, points,
+                                period, position, included, retrieved_at
+                            FROM athlete_ranking_breakdown
+                            WHERE athlete_id = :aid AND ranking_cat_id = :cat_id
+                            ORDER BY event_id, retrieved_at DESC
+                        ) latest
                         ORDER BY period, points DESC
                     """), {"aid": athlete_id, "cat_id": cat_id}).mappings().all()
             except Exception:
@@ -3931,10 +3937,170 @@ def create_app() -> FastAPI:
             "request": request,
             "athlete_name": name_row[0] if name_row else f"Athlete {athlete_id}",
             "athlete_id": athlete_id,
+            "cat_id": cat_id,
             "period1": period1,
             "period2": period2,
             "is_wtcs": is_wtcs,
         })
+
+    @app.get("/partials/rankings_rank_trend/{cat_id}/{athlete_id}", response_class=HTMLResponse)
+    def partial_rankings_rank_trend(request: Request, cat_id: int, athlete_id: int):
+        import plotly.graph_objects as go
+        import plotly.utils
+
+        tri_engine = get_triathlon_engine()
+        if not tri_engine:
+            return HTMLResponse("<p>Triathlon database not configured.</p>")
+
+        try:
+            with tri_engine.connect() as conn:
+                computed_rows = conn.execute(text("""
+                    SELECT ranking_date, rank_position
+                    FROM computed_weekly_rankings
+                    WHERE athlete_id = :aid AND ranking_cat_id = :cat_id
+                    ORDER BY ranking_date
+                """), {"aid": athlete_id, "cat_id": cat_id}).fetchall()
+
+                # Last two real snapshots from World Triathlon — always shown as
+                # the chart's tail so the trend line ends at the current rank.
+                real_rows = conn.execute(text("""
+                    SELECT retrieved_at, rank_position
+                    FROM athlete_rankings
+                    WHERE athlete_id = :aid AND ranking_cat_id = :cat_id
+                    ORDER BY retrieved_at DESC
+                    LIMIT 2
+                """), {"aid": athlete_id, "cat_id": cat_id}).fetchall()
+        except Exception as e:
+            return HTMLResponse(
+                f'<p class="muted" style="text-align:center; font-size:13px; padding:12px 0;">'
+                f'Chart unavailable: {e}</p>'
+            )
+
+        # Tail: (oldest_real_date, rank), (newest_real_date, rank) in chronological order
+        tail = sorted(((r[0], r[1]) for r in real_rows), key=lambda x: x[0])
+
+        # Drop any computed rows on/after the earliest real snapshot — real data
+        # supersedes the simulated series from that point forward.
+        if tail:
+            cutoff = tail[0][0]
+            merged = [(r[0], r[1]) for r in computed_rows if r[0] < cutoff] + tail
+        else:
+            merged = [(r[0], r[1]) for r in computed_rows]
+
+        if not merged:
+            return HTMLResponse(
+                '<p class="muted" style="text-align:center; font-size:13px; padding:12px 0;">'
+                'No historical ranking data available for this athlete.</p>'
+            )
+
+        try:
+            dates = [d.isoformat() for d, _ in merged]
+            ranks = [r for _, r in merged]
+
+            # Default visible range: last 12 months
+            from datetime import date, timedelta
+            range_end = date.today()
+            range_start = range_end - timedelta(days=365)
+
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=dates,
+                y=ranks,
+                mode="lines+markers",
+                marker=dict(size=4, color="#2563eb"),
+                line=dict(color="#2563eb", width=2),
+                hovertemplate="<b>%{x}</b><br>Rank: %{y}<extra></extra>",
+            ))
+
+            fig.update_layout(
+                margin=dict(l=40, r=20, t=10, b=40),
+                height=220,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                yaxis=dict(
+                    # Range is set dynamically in JS based on visible x-range
+                    title="Rank",
+                    title_font=dict(size=11),
+                    tickfont=dict(size=10),
+                    gridcolor="#e5e7eb",
+                ),
+                xaxis=dict(
+                    type="date",
+                    range=[range_start.isoformat(), range_end.isoformat()],
+                    rangeslider=dict(visible=True, thickness=0.08),
+                    rangeselector=dict(
+                        buttons=[
+                            dict(count=6, label="6M", step="month", stepmode="backward"),
+                            dict(count=1, label="1Y", step="year", stepmode="backward"),
+                            dict(count=2, label="2Y", step="year", stepmode="backward"),
+                            dict(step="all", label="All"),
+                        ],
+                        font=dict(size=11),
+                        bgcolor="#f1f5f9",
+                        activecolor="#2563eb",
+                    ),
+                    tickfont=dict(size=10),
+                    gridcolor="#e5e7eb",
+                ),
+                font=dict(family="inherit"),
+                showlegend=False,
+            )
+
+            chart_json = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
+        except Exception as e:
+            return HTMLResponse(
+                f'<p class="muted" style="text-align:center; font-size:13px; padding:12px 0;">'
+                f'Chart unavailable: {e}</p>'
+            )
+
+        div_id = f"rank-trend-{athlete_id}"
+        html = f"""
+<div style="margin-top:16px;">
+  <h5 style="margin:0 0 8px; font-size:13px; color:#374151;">Rank Over Time</h5>
+  <div id="{div_id}"></div>
+</div>
+<script>
+  (function() {{
+    var fig = {chart_json};
+    var divId = '{div_id}';
+    Plotly.react(divId, fig.data, fig.layout, {{responsive: true, displayModeBar: false}}).then(function() {{
+      var el = document.getElementById(divId);
+      var xs = fig.data[0].x.map(function(d) {{ return new Date(d).getTime(); }});
+      var ys = fig.data[0].y;
+
+      function fitY(xStart, xEnd) {{
+        var t0 = new Date(xStart).getTime();
+        var t1 = new Date(xEnd).getTime();
+        var visible = [];
+        for (var i = 0; i < xs.length; i++) {{
+          if (xs[i] >= t0 && xs[i] <= t1) visible.push(ys[i]);
+        }}
+        if (!visible.length) visible = ys;
+        var lo = Math.min.apply(null, visible);
+        var hi = Math.max.apply(null, visible);
+        var pad = Math.max(1, Math.ceil((hi - lo) * 0.1));
+        // reversed axis: worse rank (bigger) at bottom, best (1) at top
+        Plotly.relayout(divId, {{'yaxis.range': [hi + pad, Math.max(0, lo - pad)]}});
+      }}
+
+      // Seed initial y-range from the default 1Y window
+      var initRange = (fig.layout.xaxis && fig.layout.xaxis.range) || null;
+      if (initRange) fitY(initRange[0], initRange[1]);
+
+      el.on('plotly_relayout', function(ed) {{
+        if (ed['xaxis.range[0]'] !== undefined && ed['xaxis.range[1]'] !== undefined) {{
+          fitY(ed['xaxis.range[0]'], ed['xaxis.range[1]']);
+        }} else if (ed['xaxis.range'] && ed['xaxis.range'].length === 2) {{
+          fitY(ed['xaxis.range'][0], ed['xaxis.range'][1]);
+        }} else if (ed['xaxis.autorange']) {{
+          fitY(xs[0], xs[xs.length - 1]);
+        }}
+      }});
+    }});
+  }})();
+</script>
+"""
+        return HTMLResponse(html)
 
     return app
 

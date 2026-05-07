@@ -1,0 +1,252 @@
+athlete_id,athlete_name,event_date,event_name,race_category,distance,finish_status,finish_position,field_size,finish_pct,total_time,swim_time,bike_time,run_time
+3,Aspen Anderson,2024-02-24,2024 Oceania Triathlon Junior Championships Napier,championship,sprint,FINISH,1.0,19,0.05263157894736842,01:03:13,00:10:55,00:32:37,00:18:33
+3,Aspen Anderson,2024-05-03,2024 Oceania Triathlon Super-Sprint Championships Gold Coast,championship,super_sprint,FINISH,5.0,32,0.15625,00:14:41,00:01:57,00:07:44,00:03:54
+3,Aspen Anderson,2024-06-23,2024 Asia Triathlon Cup Gamagori,continental_cup,sprint,FINISH,13.0,43,0.3023255813953488,01:05:15,00:10:25,00:33:29,00:18:27
+3,Aspen Anderson,2024-09-28,2024 Europe Triathlon Junior Cup Salini,continental_cup,super_sprint,FINISH,1.0,39,0.02564102564102564,00:30:32,00:04:46,00:16:21,00:08:47
+3,Aspen Anderson,2024-10-17,2024 World Triathlon Championship Finals Torremolinos-Andalucia,championship,sprint,DNF,,68,,DNF,00:11:39,00:00:00,00:00:00
+3,Aspen Anderson,2025-02-23,2025 World Triathlon Cup Napier,other,sprint,FINISH,18.0,26,0.6923076923076923,00:59:06,00:10:02,00:30:24,00:17:43
+3,Aspen Anderson,2025-03-15,2025 Oceania Triathlon Championships Devonport,championship,sprint,FINISH,1.0,26,0.038461538461538464,01:02:51,00:10:12,00:34:16,00:17:03
+3,Aspen Anderson,2025-05-03,2025 Oceania Triathlon Super-Sprint Championships Runaway Bay,championship,sprint,FINISH,7.0,33,0.21212121212121213,00:20:34,00:03:20,00:11:25,00:04:40
+3,Aspen Anderson,2025-07-05,2025 Europe Triathlon Junior Cup Tiszaujvaros,continental_cup,sprint,FINISH,27.0,52,0.5192307692307693,00:00:00,00:06:50,00:19:49,00:00:00
+3,Aspen Anderson,2025-10-15,2025 World Triathlon Championship Finals Wollongong,championship,sprint,FINISH,30.0,53,0.5660377358490566,01:07:23,00:11:31,00:35:36,00:18:56
+6,Mathis Beaulieu,2024-03-08,2024 Americas Triathlon Championships Miami,championship,standard,DNF,,38,,DNF,00:00:00,00:00:00,00:00:00
+6,Mathis Beaulieu,2024-03-08,2024 Americas Triathlon Championships Miami,championship,standard,DNF,,70,,DNF,00:00:00,00:00:00,00:00:00
+6,Mathis Beaulieu,2024-03-31,2024 Americas Triathlon Cup Viña del Mar,continental_cup,sprint,FINISH,2.0,37,0.05405405405405406,00:58:56,00:10:10,00:33:08,00:13:27
+6,Mathis Beaulieu,2024-05-18,2024 World Triathlon Cup Huatulco,other,sprint,FINISH,2.0,52,0.038461538461538464,00:58:15,00:09:35,00:32:27,00:14:45
+6,Mathis Beaulieu,2024-06-08,2024 Americas Triathlon Cup Ixtapa,continental_cup,sprint,FINISH,1.0,70,0.014285714285714285,00:55:09,00:08:51,00:28:19,00:15:11
+6,Mathis Beaulieu,2024-07-06,2024 World Triathlon Cup Tiszaujvaros,other,sprint,FINISH,19.0,65,0.2923076923076923,00:54:44,00:09:12,00:28:43,00:15:30
+6,Mathis Beaulieu,2024-07-13,2024 World Triathlon Championship Series Hamburg,championship,sprint,FINISH,45.0,57,0.7894736842105263,00:53:17,00:09:27,00:28:18,00:14:39
+6,Mathis Beaulieu,2024-09-14,2024 World Triathlon Cup Valencia,other,sprint,FINISH,11.0,65,0.16923076923076924,00:50:23,00:09:12,00:25:35,00:14:39
+6,Mathis Beaulieu,2024-10-17,2024 World Triathlon Championship Finals Torremolinos-Andalucia,championship,standard,DNF,,70,,DNF,00:19:06,00:55:07,00:00:00
+6,Mathis Beaulieu,2025-03-28,2025 Americas Triathlon Cup Miami,continental_cup,sprint,FINISH,8.0,58,0.13793103448275862,00:50:30,00:08:50,00:25:13,00:15:23
+6,Mathis Beaulieu,2025-05-10,2025 World Triathlon Cup Chengdu,other,standard,FINISH,11.0,56,0.19642857142857142,01:40:19,00:18:50,00:49:43,00:30:38
+6,Mathis Beaulieu,2025-05-24,2025 World Triathlon Cup Samarkand,other,standard,FINISH,3.0,60,0.05,01:47:08,00:18:18,00:56:34,00:31:09
+6,Mathis Beaulieu,2025-07-19,2025 Americas Triathlon Cup Montreal,continental_cup,sprint,FINISH,1.0,70,0.014285714285714285,00:51:30,00:09:12,00:26:56,00:14:21
+6,Mathis Beaulieu,2025-08-31,2025 World Triathlon Championship Series French Riviera,championship,sprint,FINISH,13.0,54,0.24074074074074073,00:52:16,00:09:29,00:27:10,00:14:06
+6,Mathis Beaulieu,2025-10-15,2025 World Triathlon Championship Finals Wollongong,championship,standard,DNF,,59,,DNF,00:17:07,00:00:00,00:00:00
+11,Lucas Brighty,2024-03-08,2024 Americas Triathlon Championships Miami,championship,sprint,FINISH,30.0,56,0.5357142857142857,00:53:29,00:10:04,00:24:26,00:17:52
+12,Britney Brown,2024-08-10,2024 Americas Triathlon Cup and Central America Caribbean Championships Punta Cana,championship,sprint,FINISH,7.0,27,0.25925925925925924,01:03:21,00:09:51,00:31:58,00:20:08
+12,Britney Brown,2024-10-17,2024 World Triathlon Championship Finals Torremolinos-Andalucia,championship,sprint,FINISH,40.0,68,0.5882352941176471,01:07:09,00:11:26,00:34:24,00:19:56
+12,Britney Brown,2025-03-22,2025 Americas Triathlon Cup La Paz,continental_cup,sprint,FINISH,17.0,51,0.3333333333333333,01:02:48,00:11:21,00:31:08,00:19:21
+12,Britney Brown,2025-03-28,2025 Americas Triathlon Cup Miami,continental_cup,sprint,FINISH,35.0,66,0.5303030303030303,00:58:40,00:09:48,00:27:44,00:19:53
+12,Britney Brown,2025-07-12,2025 Americas Triathlon Cup Magog,continental_cup,sprint,FINISH,11.0,48,0.22916666666666666,01:05:06,00:09:44,00:34:14,00:20:18
+12,Britney Brown,2025-07-19,2025 Americas Triathlon Cup Montreal,continental_cup,sprint,FINISH,15.0,57,0.2631578947368421,00:59:23,00:09:55,00:29:36,00:18:55
+12,Britney Brown,2025-08-09,2025 Americas Triathlon Cup Kelowna,continental_cup,sprint,FINISH,17.0,42,0.40476190476190477,01:02:42,00:11:06,00:32:00,00:18:18
+12,Britney Brown,2025-10-15,2025 World Triathlon Championship Finals Wollongong,championship,standard,FINISH,25.0,44,0.5681818181818182,02:01:55,00:18:42,01:02:19,00:39:34
+12,Britney Brown,2025-11-15,2025 World Triathlon Cup Tongyeong,other,sprint,FINISH,27.0,52,0.5192307692307693,01:00:22,00:09:27,00:30:50,00:18:52
+13,Blake Bullard,2024-03-08,2024 Americas Triathlon Championships Miami,championship,sprint,FINISH,21.0,56,0.375,00:52:44,00:09:14,00:25:14,00:17:12
+13,Blake Bullard,2024-03-17,2024 Americas Triathlon Cup Barbados,continental_cup,sprint,FINISH,5.0,23,0.21739130434782608,00:56:21,00:09:25,00:29:41,00:16:53
+13,Blake Bullard,2024-08-10,2024 Americas Triathlon Cup and Central America Caribbean Championships Punta Cana,championship,sprint,FINISH,11.0,66,0.16666666666666666,00:56:11,00:09:09,00:29:56,00:15:50
+13,Blake Bullard,2024-10-06,2024 Europe Triathlon Cup Ceuta,continental_cup,sprint,FINISH,41.0,70,0.5857142857142857,00:56:26,00:10:05,00:28:34,00:15:53
+13,Blake Bullard,2024-10-17,2024 World Triathlon Championship Finals Torremolinos-Andalucia,championship,sprint,DNF,,71,,DNF,00:10:26,00:00:00,00:00:00
+13,Blake Bullard,2025-02-16,2025 Americas Triathlon Cup La Habana,continental_cup,sprint,FINISH,2.0,27,0.07407407407407407,00:53:37,00:08:35,00:28:22,00:15:55
+13,Blake Bullard,2025-03-22,2025 Americas Triathlon Cup La Paz,continental_cup,sprint,FINISH,21.0,69,0.30434782608695654,00:54:31,00:10:57,00:27:31,00:15:09
+13,Blake Bullard,2025-03-28,2025 Americas Triathlon Cup Miami,continental_cup,sprint,FINISH,31.0,58,0.5344827586206896,00:53:11,00:08:41,00:27:07,00:16:21
+13,Blake Bullard,2025-05-17,2025 Americas Triathlon Cup Ixtapa,continental_cup,sprint,DNF,,67,,DNF,00:09:41,00:00:00,00:00:00
+13,Blake Bullard,2025-06-07,2025 Americas Triathlon Championships Calima,championship,sprint,FINISH,5.0,53,0.09433962264150944,01:01:48,00:09:50,00:32:37,00:17:51
+13,Blake Bullard,2025-07-12,2025 Americas Triathlon Cup Magog,continental_cup,sprint,FINISH,5.0,70,0.07142857142857142,00:55:47,00:08:38,00:31:06,00:15:16
+13,Blake Bullard,2025-08-20,2025 Asuncion Junior Pan-American Games,championship,sprint,FINISH,2.0,32,0.0625,00:54:23,00:10:15,00:28:35,00:14:28
+13,Blake Bullard,2025-10-15,2025 World Triathlon Championship Finals Wollongong,championship,sprint,FINISH,12.0,62,0.1935483870967742,00:56:19,00:09:15,00:30:32,00:15:24
+13,Blake Bullard,2025-10-25,2025 Americas Triathlon Cup Iquique,continental_cup,sprint,FINISH,1.0,54,0.018518518518518517,00:50:32,00:09:16,00:25:41,00:13:41
+13,Blake Bullard,2025-11-02,2025 Americas Triathlon Cup Vina del Mar,continental_cup,sprint,FINISH,3.0,69,0.043478260869565216,00:54:49,00:11:01,00:27:07,00:15:21
+13,Blake Bullard,2025-11-15,2025 World Triathlon Cup Florianopolis,other,sprint,FINISH,51.0,64,0.796875,00:58:18,00:09:55,00:31:44,00:15:08
+18,Owen Cravens,2024-05-11,2024 World Triathlon Para Series Yokohama,other,sprint,FINISH,3.0,9,0.3333333333333333,00:57:37,00:10:10,00:26:26,00:16:33
+18,Owen Cravens,2024-06-15,2024 World Triathlon Para Cup Besancon,other,sprint,FINISH,4.0,7,0.5714285714285714,01:02:16,00:10:15,00:29:09,00:18:15
+18,Owen Cravens,2024-06-22,2024 World Triathlon Para Series Swansea,other,sprint,FINISH,2.0,12,0.16666666666666666,01:01:19,00:10:04,00:29:40,00:16:56
+18,Owen Cravens,2024-09-02,Paris 2024 Paralympic Games,championship,sprint,FINISH,4.0,12,0.3333333333333333,01:00:43,00:10:50,00:27:27,00:18:19
+18,Owen Cravens,2025-09-06,2025 World Triathlon Para Cup Alhandra,other,sprint,FINISH,3.0,10,0.3,01:00:36,00:12:40,00:25:47,00:17:33
+18,Owen Cravens,2025-10-15,2025 World Triathlon Para Championships Wollongong,championship,standard,DNF,,11,,DNF,00:09:51,00:00:00,00:00:00
+24,Jimena De La Pena,2024-03-08,2024 Americas Triathlon Championships Miami,championship,sprint,FINISH,4.0,41,0.0975609756097561,00:56:57,00:10:33,00:27:29,00:17:43
+24,Jimena De La Pena,2024-06-08,2024 Americas Triathlon Cup Ixtapa,continental_cup,sprint,FINISH,13.0,42,0.30952380952380953,01:04:51,00:09:58,00:31:58,00:19:40
+24,Jimena De La Pena,2024-09-14,2024 World Triathlon Cup Valencia,other,sprint,FINISH,24.0,42,0.5714285714285714,00:57:32,00:10:02,00:28:09,00:18:11
+24,Jimena De La Pena,2024-10-17,2024 World Triathlon Championship Finals Torremolinos-Andalucia,championship,sprint,FINISH,6.0,68,0.08823529411764706,01:02:50,00:11:25,00:32:09,00:17:52
+24,Jimena De La Pena,2025-02-16,2025 Americas Triathlon Cup La Habana,continental_cup,sprint,FINISH,4.0,13,0.3076923076923077,01:00:49,00:10:16,00:31:44,00:17:56
+24,Jimena De La Pena,2025-03-28,2025 Americas Triathlon Cup Miami,continental_cup,sprint,FINISH,18.0,66,0.2727272727272727,00:56:56,00:09:50,00:27:46,00:18:10
+24,Jimena De La Pena,2025-06-07,2025 Americas Triathlon Championships Calima,championship,sprint,FINISH,1.0,38,0.02631578947368421,01:07:22,00:11:04,00:35:08,00:20:02
+24,Jimena De La Pena,2025-07-12,2025 Americas Triathlon Cup Magog,continental_cup,sprint,FINISH,8.0,48,0.16666666666666666,01:04:00,00:10:03,00:33:58,00:19:11
+24,Jimena De La Pena,2025-08-20,2025 Asuncion Junior Pan-American Games,championship,sprint,FINISH,10.0,32,0.3125,01:02:49,00:12:23,00:30:33,00:18:39
+24,Jimena De La Pena,2025-10-15,2025 World Triathlon Championship Finals Wollongong,championship,sprint,FINISH,10.0,53,0.18867924528301888,01:05:58,00:11:09,00:34:51,00:18:37
+24,Jimena De La Pena,2025-11-02,2025 Americas Triathlon Cup Vina del Mar,continental_cup,sprint,FINISH,4.0,39,0.10256410256410256,00:59:41,00:09:15,00:30:26,00:18:23
+25,Michael Dizon-Bumann,2025-07-12,2025 Americas Triathlon Cup Magog,continental_cup,sprint,DNF,,70,,DNF,00:09:28,00:00:00,00:00:00
+25,Michael Dizon-Bumann,2025-07-19,2025 Americas Triathlon Cup Montreal,continental_cup,sprint,DNF,,70,,DNF,00:10:00,00:32:32,00:00:00
+25,Michael Dizon-Bumann,2025-08-20,2025 Asuncion Junior Pan-American Games,championship,sprint,DNF,,32,,DNF,00:13:08,00:00:00,00:00:00
+35,shavit haiat,2024-03-23,2024 Europe Triathlon Cup Quarteira,continental_cup,standard,DNF,,70,,DNF,00:00:00,00:00:00,00:00:00
+35,shavit haiat,2024-05-25,2024 Europe Triathlon Cup Olsztyn,continental_cup,sprint,FINISH,56.0,70,0.8,00:58:07,00:09:51,00:29:29,00:17:04
+35,shavit haiat,2024-06-02,2024 Europe Triathlon Cup Kielce,continental_cup,super_sprint,FINISH,70.0,75,0.9333333333333333,00:24:43,00:05:22,00:10:46,00:06:36
+35,shavit haiat,2024-06-22,2024 Europe Triathlon Cup Wels,continental_cup,sprint,FINISH,42.0,70,0.6,00:59:16,00:10:04,00:30:09,00:16:00
+35,shavit haiat,2024-09-28,2024 Europe Triathlon Mediterranean Championships Salini,championship,sprint,DNF,,43,,DNF,00:08:27,00:00:00,00:00:00
+35,shavit haiat,2024-10-05,2024 World Triathlon Cup Rome,other,sprint,FINISH,49.0,62,0.7903225806451613,00:59:47,00:09:37,00:31:32,00:17:04
+35,shavit haiat,2025-03-28,2025 Americas Triathlon Cup Miami,continental_cup,sprint,DNF,,58,,DNF,00:09:01,00:00:00,00:00:00
+35,shavit haiat,2025-05-31,2025 Americas Triathlon Cup Salinas,continental_cup,sprint,FINISH,28.0,41,0.6829268292682927,00:56:16,00:10:56,00:27:36,00:16:10
+35,shavit haiat,2025-09-20,2025 Asia Triathlon Cup Gamagori,continental_cup,sprint,FINISH,22.0,70,0.3142857142857143,00:54:49,00:09:35,00:27:37,00:16:45
+35,shavit haiat,2025-09-26,2025 Asia Triathlon Cup Yilan,continental_cup,sprint,FINISH,27.0,57,0.47368421052631576,00:56:05,00:10:20,00:26:42,00:17:01
+35,shavit haiat,2025-10-25,2025 Americas Triathlon Cup Iquique,continental_cup,sprint,FINISH,28.0,54,0.5185185185185185,00:52:58,00:10:26,00:25:18,00:15:06
+35,shavit haiat,2025-11-02,2025 Americas Triathlon Cup Vina del Mar,continental_cup,sprint,FINISH,51.0,69,0.7391304347826086,01:00:16,00:12:26,00:29:15,00:16:58
+36,Chris Hammer,2024-05-11,2024 World Triathlon Para Series Yokohama,other,sprint,FINISH,1.0,8,0.125,00:56:25,00:11:01,00:27:59,00:15:30
+36,Chris Hammer,2024-06-22,2024 World Triathlon Para Series Swansea,other,sprint,FINISH,4.0,10,0.4,01:01:08,00:10:56,00:32:25,00:15:44
+36,Chris Hammer,2024-06-29,2024 World Triathlon Para Series Montreal,other,sprint,FINISH,1.0,11,0.09090909090909091,00:56:50,00:11:08,00:28:05,00:16:01
+36,Chris Hammer,2024-09-02,Paris 2024 Paralympic Games,championship,sprint,FINISH,1.0,10,0.1,00:58:44,00:12:03,00:29:06,00:15:59
+36,Chris Hammer,2024-10-17,2024 World Triathlon Para Championships Torremolinos-Andalucia,championship,sprint,FINISH,4.0,12,0.3333333333333333,01:01:22,00:13:41,00:28:31,00:15:30
+36,Chris Hammer,2025-07-12,2025 World Triathlon Para Cup Magog,other,sprint,FINISH,1.0,7,0.14285714285714285,01:00:13,00:10:49,00:30:45,00:16:41
+36,Chris Hammer,2025-07-19,2025 World Triathlon Para Series Montreal,other,sprint,FINISH,3.0,8,0.375,00:57:42,00:11:38,00:28:14,00:16:24
+36,Chris Hammer,2025-10-15,2025 World Triathlon Para Championships Wollongong,championship,standard,FINISH,1.0,13,0.07692307692307693,00:58:32,00:10:49,00:30:01,00:16:03
+44,Jackson Langley,2025-08-23,2025 Americas Triathlon CARIFTA  Championships Tobago,championship,sprint,FINISH,5.0,19,0.2631578947368421,01:08:58,00:13:36,00:34:36,00:19:57
+46,Braxton Legg,2024-08-24,2024 Americas Triathlon Cup Edmonton,continental_cup,sprint,FINISH,6.0,35,0.17142857142857143,00:50:44,00:07:39,00:25:26,00:15:59
+46,Braxton Legg,2024-10-06,2024 Europe Triathlon Cup Ceuta,continental_cup,sprint,FINISH,58.0,70,0.8285714285714286,00:57:42,00:10:20,00:28:23,00:17:18
+46,Braxton Legg,2024-10-17,2024 World Triathlon Championship Finals Torremolinos-Andalucia,championship,sprint,DNS,,71,,DNS,00:00:00,00:00:00,00:00:00
+46,Braxton Legg,2025-02-16,2025 Americas Triathlon Cup La Habana,continental_cup,sprint,FINISH,1.0,27,0.037037037037037035,00:53:21,00:08:47,00:28:14,00:15:38
+46,Braxton Legg,2025-03-22,2025 Americas Triathlon Cup La Paz,continental_cup,sprint,FINISH,5.0,69,0.07246376811594203,00:53:30,00:11:03,00:27:24,00:14:16
+46,Braxton Legg,2025-03-28,2025 Americas Triathlon Cup Miami,continental_cup,sprint,FINISH,6.0,58,0.10344827586206896,00:50:22,00:09:08,00:24:55,00:15:19
+46,Braxton Legg,2025-05-24,2025 World Triathlon Cup Samarkand,other,standard,DNF,,60,,DNF,00:18:55,00:00:00,00:00:00
+46,Braxton Legg,2025-06-07,2025 Americas Triathlon Championships Calima,championship,standard,FINISH,15.0,70,0.21428571428571427,01:56:26,00:18:46,00:57:20,00:37:15
+46,Braxton Legg,2025-06-07,2025 Americas Triathlon Championships Calima,championship,standard,FINISH,7.0,38,0.18421052631578946,01:56:26,00:18:46,00:57:20,00:37:15
+46,Braxton Legg,2025-07-12,2025 Americas Triathlon Cup Magog,continental_cup,sprint,FINISH,3.0,70,0.04285714285714286,00:55:42,00:08:55,00:30:48,00:15:15
+46,Braxton Legg,2025-07-19,2025 Americas Triathlon Cup Montreal,continental_cup,sprint,FINISH,3.0,70,0.04285714285714286,00:51:47,00:09:11,00:27:00,00:14:39
+46,Braxton Legg,2025-08-09,2025 Americas Triathlon Cup Kelowna,continental_cup,sprint,FINISH,10.0,63,0.15873015873015872,00:54:10,00:09:55,00:27:48,00:15:19
+46,Braxton Legg,2025-08-20,2025 Asuncion Junior Pan-American Games,championship,sprint,FINISH,1.0,32,0.03125,00:54:16,00:10:25,00:28:25,00:14:23
+46,Braxton Legg,2025-10-15,2025 World Triathlon Championship Finals Wollongong,championship,standard,FINISH,19.0,59,0.3220338983050847,01:47:42,00:17:29,00:56:45,00:32:15
+46,Braxton Legg,2025-11-02,2025 World Triathlon Cup Vina del Mar,other,sprint,FINISH,25.0,65,0.38461538461538464,00:50:46,00:08:16,00:25:48,00:15:22
+46,Braxton Legg,2025-11-09,2025 World Triathlon Cup San Pedro de la Paz,other,sprint,FINISH,21.0,66,0.3181818181818182,00:55:46,00:08:31,00:30:41,00:15:08
+47,Braxton Legg,2024-08-24,2024 Americas Triathlon Cup Edmonton,continental_cup,sprint,FINISH,6.0,35,0.17142857142857143,00:50:44,00:07:39,00:25:26,00:15:59
+47,Braxton Legg,2024-10-06,2024 Europe Triathlon Cup Ceuta,continental_cup,sprint,FINISH,58.0,70,0.8285714285714286,00:57:42,00:10:20,00:28:23,00:17:18
+47,Braxton Legg,2024-10-17,2024 World Triathlon Championship Finals Torremolinos-Andalucia,championship,sprint,DNS,,71,,DNS,00:00:00,00:00:00,00:00:00
+47,Braxton Legg,2025-02-16,2025 Americas Triathlon Cup La Habana,continental_cup,sprint,FINISH,1.0,27,0.037037037037037035,00:53:21,00:08:47,00:28:14,00:15:38
+47,Braxton Legg,2025-03-22,2025 Americas Triathlon Cup La Paz,continental_cup,sprint,FINISH,5.0,69,0.07246376811594203,00:53:30,00:11:03,00:27:24,00:14:16
+47,Braxton Legg,2025-03-28,2025 Americas Triathlon Cup Miami,continental_cup,sprint,FINISH,6.0,58,0.10344827586206896,00:50:22,00:09:08,00:24:55,00:15:19
+47,Braxton Legg,2025-05-24,2025 World Triathlon Cup Samarkand,other,standard,DNF,,60,,DNF,00:18:55,00:00:00,00:00:00
+47,Braxton Legg,2025-06-07,2025 Americas Triathlon Championships Calima,championship,standard,FINISH,7.0,38,0.18421052631578946,01:56:26,00:18:46,00:57:20,00:37:15
+47,Braxton Legg,2025-06-07,2025 Americas Triathlon Championships Calima,championship,standard,FINISH,15.0,70,0.21428571428571427,01:56:26,00:18:46,00:57:20,00:37:15
+47,Braxton Legg,2025-07-12,2025 Americas Triathlon Cup Magog,continental_cup,sprint,FINISH,3.0,70,0.04285714285714286,00:55:42,00:08:55,00:30:48,00:15:15
+47,Braxton Legg,2025-07-19,2025 Americas Triathlon Cup Montreal,continental_cup,sprint,FINISH,3.0,70,0.04285714285714286,00:51:47,00:09:11,00:27:00,00:14:39
+47,Braxton Legg,2025-08-09,2025 Americas Triathlon Cup Kelowna,continental_cup,sprint,FINISH,10.0,63,0.15873015873015872,00:54:10,00:09:55,00:27:48,00:15:19
+47,Braxton Legg,2025-08-20,2025 Asuncion Junior Pan-American Games,championship,sprint,FINISH,1.0,32,0.03125,00:54:16,00:10:25,00:28:25,00:14:23
+47,Braxton Legg,2025-10-15,2025 World Triathlon Championship Finals Wollongong,championship,standard,FINISH,19.0,59,0.3220338983050847,01:47:42,00:17:29,00:56:45,00:32:15
+47,Braxton Legg,2025-11-02,2025 World Triathlon Cup Vina del Mar,other,sprint,FINISH,25.0,65,0.38461538461538464,00:50:46,00:08:16,00:25:48,00:15:22
+47,Braxton Legg,2025-11-09,2025 World Triathlon Cup San Pedro de la Paz,other,sprint,FINISH,21.0,66,0.3181818181818182,00:55:46,00:08:31,00:30:41,00:15:08
+55,Keller norland,2024-02-25,2024 Americas Triathlon Cup La Habana,continental_cup,standard,FINISH,7.0,33,0.21212121212121213,01:47:05,00:18:30,00:56:15,00:31:12
+55,Keller norland,2024-03-08,2024 Americas Triathlon Championships Miami,championship,standard,FINISH,9.0,38,0.23684210526315788,01:48:48,00:19:41,00:54:26,00:33:33
+55,Keller norland,2024-03-17,2024 Americas Triathlon Cup Barbados,continental_cup,sprint,FINISH,13.0,23,0.5652173913043478,00:58:36,00:09:32,00:29:30,00:19:08
+55,Keller norland,2024-04-14,2024 Americas Triathlon Cup Salinas,continental_cup,sprint,FINISH,2.0,23,0.08695652173913043,00:51:20,00:07:51,00:26:43,00:15:19
+55,Keller norland,2024-05-04,2024 Americas Triathlon Cup Calima,continental_cup,sprint,FINISH,2.0,33,0.06060606060606061,00:58:16,00:09:52,00:29:46,00:15:00
+55,Keller norland,2024-05-18,2024 World Triathlon Cup Huatulco,other,sprint,FINISH,44.0,52,0.8461538461538461,01:07:26,00:09:45,00:37:02,00:19:13
+55,Keller norland,2024-07-13,2024 Americas Triathlon Cup Magog,continental_cup,sprint,FINISH,2.0,64,0.03125,00:51:38,00:08:59,00:26:35,00:15:35
+55,Keller norland,2024-08-10,2024 Americas Triathlon Cup and Central America Caribbean Championships Punta Cana,championship,sprint,FINISH,35.0,66,0.5303030303030303,00:59:14,00:09:23,00:29:40,00:18:51
+55,Keller norland,2024-08-24,2024 Americas Triathlon Cup Edmonton,continental_cup,sprint,FINISH,10.0,35,0.2857142857142857,00:51:24,00:07:38,00:25:26,00:16:36
+55,Keller norland,2024-09-08,2024 World Triathlon Cup Karlovy Vary,other,standard,FINISH,27.0,52,0.5192307692307693,01:59:36,00:18:41,01:05:28,00:34:35
+55,Keller norland,2024-09-14,2024 World Triathlon Cup Valencia,other,sprint,DNF,,65,,DNF,00:09:19,00:26:26,00:00:00
+55,Keller norland,2025-02-23,2025 World Triathlon Cup Napier,other,sprint,FINISH,20.0,35,0.5714285714285714,00:52:08,00:08:53,00:26:15,00:15:59
+55,Keller norland,2025-03-22,2025 Americas Triathlon Cup La Paz,continental_cup,sprint,FINISH,8.0,69,0.11594202898550725,00:53:44,00:11:05,00:27:27,00:14:36
+55,Keller norland,2025-03-28,2025 Americas Triathlon Cup Miami,continental_cup,sprint,FINISH,12.0,58,0.20689655172413793,00:50:52,00:09:09,00:24:54,00:15:45
+55,Keller norland,2025-05-10,2025 World Triathlon Cup Chengdu,other,standard,FINISH,25.0,56,0.44642857142857145,01:41:30,00:18:54,00:49:38,00:31:46
+55,Keller norland,2025-05-24,2025 World Triathlon Cup Samarkand,other,standard,FINISH,19.0,60,0.31666666666666665,01:49:49,00:19:21,00:55:43,00:33:42
+55,Keller norland,2025-06-07,2025 Americas Triathlon Championships Calima,championship,standard,FINISH,14.0,38,0.3684210526315789,02:01:47,00:19:29,00:56:21,00:42:22
+55,Keller norland,2025-06-07,2025 Americas Triathlon Championships Calima,championship,standard,FINISH,30.0,70,0.42857142857142855,02:01:47,00:19:29,00:56:21,00:42:22
+55,Keller norland,2025-08-09,2025 Americas Triathlon Cup Kelowna,continental_cup,sprint,FINISH,1.0,63,0.015873015873015872,00:53:20,00:10:06,00:27:32,00:14:32
+55,Keller norland,2025-11-02,2025 World Triathlon Cup Vina del Mar,other,sprint,FINISH,15.0,65,0.23076923076923078,00:50:21,00:08:24,00:25:52,00:14:39
+55,Keller norland,2025-11-09,2025 World Triathlon Cup San Pedro de la Paz,other,sprint,FINISH,37.0,66,0.5606060606060606,00:56:18,00:08:48,00:30:28,00:15:34
+55,Keller norland,2025-11-15,2025 World Triathlon Cup Florianopolis,other,sprint,DNF,,64,,DNF,00:00:00,00:00:00,00:00:00
+69,Carter Stuhlmacher,2024-03-08,2024 Americas Triathlon Championships Miami,championship,standard,FINISH,12.0,38,0.3157894736842105,01:52:52,00:18:08,00:52:54,00:40:41
+69,Carter Stuhlmacher,2024-03-17,2024 Americas Triathlon Cup Barbados,continental_cup,sprint,FINISH,15.0,23,0.6521739130434783,00:59:41,00:09:15,00:29:52,00:20:13
+69,Carter Stuhlmacher,2024-05-04,2024 Americas Triathlon Cup Calima,continental_cup,sprint,FINISH,4.0,33,0.12121212121212122,00:58:35,00:09:36,00:30:12,00:15:14
+69,Carter Stuhlmacher,2024-07-13,2024 Americas Triathlon Cup Magog,continental_cup,sprint,FINISH,26.0,64,0.40625,00:54:03,00:08:46,00:26:47,00:17:57
+69,Carter Stuhlmacher,2024-08-10,2024 Americas Triathlon Cup and Central America Caribbean Championships Punta Cana,championship,sprint,FINISH,20.0,66,0.30303030303030304,00:57:21,00:08:47,00:28:37,00:18:31
+69,Carter Stuhlmacher,2024-10-06,2024 Europe Triathlon Cup Ceuta,continental_cup,sprint,FINISH,68.0,70,0.9714285714285714,01:04:29,00:09:52,00:33:21,00:19:24
+69,Carter Stuhlmacher,2025-02-16,2025 Americas Triathlon Cup La Habana,continental_cup,sprint,FINISH,16.0,27,0.5925925925925926,00:56:20,00:08:35,00:28:23,00:18:36
+69,Carter Stuhlmacher,2025-07-12,2025 Americas Triathlon Cup Magog,continental_cup,sprint,FINISH,44.0,70,0.6285714285714286,00:59:23,00:08:50,00:30:54,00:18:53
+69,Carter Stuhlmacher,2025-07-19,2025 Americas Triathlon Cup Montreal,continental_cup,sprint,FINISH,43.0,70,0.6142857142857143,00:54:19,00:09:04,00:27:10,00:16:58
+69,Carter Stuhlmacher,2025-10-25,2025 Americas Triathlon Cup Iquique,continental_cup,sprint,FINISH,5.0,54,0.09259259259259259,00:51:30,00:09:17,00:25:35,00:14:37
+69,Carter Stuhlmacher,2025-11-02,2025 Americas Triathlon Cup Vina del Mar,continental_cup,sprint,FINISH,2.0,69,0.028985507246376812,00:54:29,00:10:48,00:27:19,00:14:57
+70,Aaron Tate,2024-03-08,2024 Americas Triathlon Championships Miami,championship,sprint,FINISH,1.0,56,0.017857142857142856,00:50:42,00:09:33,00:24:54,00:15:11
+70,Aaron Tate,2024-03-17,2024 Americas Triathlon Cup Barbados,continental_cup,sprint,FINISH,1.0,23,0.043478260869565216,00:55:17,00:09:32,00:29:28,00:15:49
+70,Aaron Tate,2024-05-04,2024 Americas Triathlon Cup Calima,continental_cup,sprint,FINISH,6.0,33,0.18181818181818182,00:58:51,00:09:41,00:30:10,00:15:26
+70,Aaron Tate,2024-05-18,2024 World Triathlon Cup Huatulco,other,sprint,FINISH,11.0,52,0.21153846153846154,00:58:49,00:09:34,00:32:28,00:15:24
+70,Aaron Tate,2024-08-10,2024 Americas Triathlon Cup and Central America Caribbean Championships Punta Cana,championship,sprint,FINISH,2.0,66,0.030303030303030304,00:55:16,00:09:14,00:29:54,00:14:55
+70,Aaron Tate,2024-09-14,2024 World Triathlon Cup Valencia,other,sprint,FINISH,7.0,65,0.1076923076923077,00:50:12,00:09:14,00:25:36,00:14:25
+70,Aaron Tate,2024-10-17,2024 World Triathlon Championship Finals Torremolinos-Andalucia,championship,sprint,FINISH,2.0,71,0.028169014084507043,00:55:11,00:10:18,00:28:29,00:14:45
+70,Aaron Tate,2024-11-09,2024 World Triathlon Cup Miyazaki,other,sprint,DNF,,42,,DNF,00:08:51,00:00:00,00:00:00
+70,Aaron Tate,2025-02-23,2025 World Triathlon Cup Napier,other,sprint,FINISH,5.0,35,0.14285714285714285,00:50:36,00:08:44,00:26:26,00:14:36
+70,Aaron Tate,2025-03-22,2025 Americas Triathlon Cup La Paz,continental_cup,sprint,FINISH,1.0,69,0.014492753623188406,00:53:13,00:11:02,00:27:32,00:14:11
+70,Aaron Tate,2025-03-28,2025 Americas Triathlon Cup Miami,continental_cup,sprint,FINISH,1.0,58,0.017241379310344827,00:49:54,00:08:45,00:25:24,00:14:53
+70,Aaron Tate,2025-05-10,2025 World Triathlon Cup Chengdu,other,standard,FINISH,1.0,56,0.017857142857142856,01:39:42,00:18:50,00:49:44,00:30:02
+70,Aaron Tate,2025-05-24,2025 World Triathlon Cup Samarkand,other,standard,FINISH,23.0,60,0.38333333333333336,01:50:12,00:18:58,00:56:05,00:34:12
+70,Aaron Tate,2025-07-12,2025 World Triathlon Championship Series Hamburg,championship,sprint,DNF,,55,,DNF,00:09:08,00:00:00,00:00:00
+70,Aaron Tate,2025-08-09,2025 Americas Triathlon Cup Kelowna,continental_cup,sprint,FINISH,2.0,63,0.031746031746031744,00:53:27,00:09:52,00:27:55,00:14:38
+70,Aaron Tate,2025-10-15,2025 World Triathlon Championship Finals Wollongong,championship,standard,LAP,,52,,LAP,00:19:40,00:00:00,00:00:00
+70,Aaron Tate,2025-10-15,2025 World Triathlon Championship Finals Wollongong,championship,standard,FINISH,8.0,59,0.13559322033898305,01:45:40,00:17:14,00:57:06,00:30:13
+70,Aaron Tate,2025-11-02,2025 World Triathlon Cup Vina del Mar,other,sprint,FINISH,5.0,65,0.07692307692307693,00:49:52,00:08:39,00:25:39,00:14:16
+70,Aaron Tate,2025-11-09,2025 World Triathlon Cup San Pedro de la Paz,other,sprint,FINISH,8.0,66,0.12121212121212122,00:55:05,00:08:43,00:30:36,00:14:27
+77,Reese Vannerson,2024-03-08,2024 Americas Triathlon Championships Miami,championship,sprint,FINISH,1.0,56,0.017857142857142856,00:50:42,00:09:33,00:24:54,00:15:11
+77,Reese Vannerson,2024-03-17,2024 Americas Triathlon Cup Barbados,continental_cup,sprint,FINISH,1.0,23,0.043478260869565216,00:55:17,00:09:32,00:29:28,00:15:49
+77,Reese Vannerson,2024-05-04,2024 Americas Triathlon Cup Calima,continental_cup,sprint,FINISH,6.0,33,0.18181818181818182,00:58:51,00:09:41,00:30:10,00:15:26
+77,Reese Vannerson,2024-05-18,2024 World Triathlon Cup Huatulco,other,sprint,FINISH,11.0,52,0.21153846153846154,00:58:49,00:09:34,00:32:28,00:15:24
+77,Reese Vannerson,2024-08-10,2024 Americas Triathlon Cup and Central America Caribbean Championships Punta Cana,championship,sprint,FINISH,2.0,66,0.030303030303030304,00:55:16,00:09:14,00:29:54,00:14:55
+77,Reese Vannerson,2024-09-14,2024 World Triathlon Cup Valencia,other,sprint,FINISH,7.0,65,0.1076923076923077,00:50:12,00:09:14,00:25:36,00:14:25
+77,Reese Vannerson,2024-10-17,2024 World Triathlon Championship Finals Torremolinos-Andalucia,championship,sprint,FINISH,2.0,71,0.028169014084507043,00:55:11,00:10:18,00:28:29,00:14:45
+77,Reese Vannerson,2024-11-09,2024 World Triathlon Cup Miyazaki,other,sprint,DNF,,42,,DNF,00:08:51,00:00:00,00:00:00
+77,Reese Vannerson,2025-02-23,2025 World Triathlon Cup Napier,other,sprint,FINISH,5.0,35,0.14285714285714285,00:50:36,00:08:44,00:26:26,00:14:36
+77,Reese Vannerson,2025-03-22,2025 Americas Triathlon Cup La Paz,continental_cup,sprint,FINISH,1.0,69,0.014492753623188406,00:53:13,00:11:02,00:27:32,00:14:11
+77,Reese Vannerson,2025-03-28,2025 Americas Triathlon Cup Miami,continental_cup,sprint,FINISH,1.0,58,0.017241379310344827,00:49:54,00:08:45,00:25:24,00:14:53
+77,Reese Vannerson,2025-05-10,2025 World Triathlon Cup Chengdu,other,standard,FINISH,1.0,56,0.017857142857142856,01:39:42,00:18:50,00:49:44,00:30:02
+77,Reese Vannerson,2025-05-24,2025 World Triathlon Cup Samarkand,other,standard,FINISH,23.0,60,0.38333333333333336,01:50:12,00:18:58,00:56:05,00:34:12
+77,Reese Vannerson,2025-07-12,2025 World Triathlon Championship Series Hamburg,championship,sprint,DNF,,55,,DNF,00:09:08,00:00:00,00:00:00
+77,Reese Vannerson,2025-08-09,2025 Americas Triathlon Cup Kelowna,continental_cup,sprint,FINISH,2.0,63,0.031746031746031744,00:53:27,00:09:52,00:27:55,00:14:38
+77,Reese Vannerson,2025-10-15,2025 World Triathlon Championship Finals Wollongong,championship,standard,FINISH,8.0,59,0.13559322033898305,01:45:40,00:17:14,00:57:06,00:30:13
+77,Reese Vannerson,2025-10-15,2025 World Triathlon Championship Finals Wollongong,championship,standard,LAP,,52,,LAP,00:19:40,00:00:00,00:00:00
+77,Reese Vannerson,2025-11-02,2025 World Triathlon Cup Vina del Mar,other,sprint,FINISH,5.0,65,0.07692307692307693,00:49:52,00:08:39,00:25:39,00:14:16
+77,Reese Vannerson,2025-11-09,2025 World Triathlon Cup San Pedro de la Paz,other,sprint,FINISH,8.0,66,0.12121212121212122,00:55:05,00:08:43,00:30:36,00:14:27
+95,Blake Harris,2024-02-25,2024 Americas Triathlon Cup La Habana,continental_cup,standard,FINISH,14.0,33,0.42424242424242425,01:48:48,00:18:50,00:55:53,00:32:54
+95,Blake Harris,2024-03-08,2024 Americas Triathlon Championships Miami,championship,standard,FINISH,14.0,38,0.3684210526315789,01:53:47,00:19:51,00:54:17,00:38:29
+95,Blake Harris,2024-03-17,2024 Americas Triathlon Cup Barbados,continental_cup,sprint,FINISH,10.0,23,0.43478260869565216,00:57:43,00:09:41,00:29:58,00:17:23
+95,Blake Harris,2024-04-14,2024 Americas Triathlon Cup Salinas,continental_cup,sprint,FINISH,9.0,23,0.391304347826087,00:52:30,00:07:47,00:26:55,00:16:14
+95,Blake Harris,2024-05-04,2024 Americas Triathlon Cup Calima,continental_cup,sprint,FINISH,10.0,33,0.30303030303030304,00:59:18,00:09:56,00:29:52,00:15:57
+95,Blake Harris,2024-07-13,2024 Americas Triathlon Cup Magog,continental_cup,sprint,FINISH,11.0,64,0.171875,00:52:35,00:09:10,00:26:26,00:16:28
+95,Blake Harris,2024-08-10,2024 Americas Triathlon Cup and Central America Caribbean Championships Punta Cana,championship,sprint,FINISH,5.0,66,0.07575757575757576,00:55:36,00:09:32,00:29:36,00:15:12
+95,Blake Harris,2024-08-24,2024 Americas Triathlon Cup Edmonton,continental_cup,sprint,FINISH,8.0,35,0.22857142857142856,00:51:08,00:07:40,00:25:22,00:16:17
+95,Blake Harris,2024-10-05,2024 World Triathlon Cup Rome,other,sprint,FINISH,44.0,62,0.7096774193548387,00:58:56,00:09:38,00:31:30,00:16:08
+95,Blake Harris,2024-10-26,2024 World Triathlon Cup Tongyeong,other,standard,FINISH,30.0,49,0.6122448979591837,01:51:35,00:18:05,00:56:21,00:36:09
+95,Blake Harris,2024-11-09,2024 World Triathlon Cup Miyazaki,other,sprint,FINISH,25.0,42,0.5952380952380952,00:56:37,00:09:11,00:29:36,00:16:30
+95,Blake Harris,2025-03-22,2025 Americas Triathlon Cup La Paz,continental_cup,sprint,FINISH,28.0,69,0.4057971014492754,00:55:02,00:11:13,00:27:15,00:15:47
+95,Blake Harris,2025-03-28,2025 Americas Triathlon Cup Miami,continental_cup,sprint,FINISH,17.0,58,0.29310344827586204,00:51:14,00:08:51,00:25:10,00:16:09
+95,Blake Harris,2025-05-31,2025 Americas Triathlon Cup Salinas,continental_cup,sprint,FINISH,6.0,41,0.14634146341463414,00:53:47,00:10:40,00:27:23,00:14:14
+95,Blake Harris,2025-06-07,2025 Americas Triathlon Championships Calima,championship,standard,FINISH,11.0,70,0.15714285714285714,01:55:35,00:18:59,00:57:13,00:36:16
+95,Blake Harris,2025-06-07,2025 Americas Triathlon Championships Calima,championship,standard,FINISH,5.0,38,0.13157894736842105,01:55:35,00:18:59,00:57:13,00:36:16
+95,Blake Harris,2025-07-12,2025 Americas Triathlon Cup Magog,continental_cup,sprint,FINISH,35.0,70,0.5,00:57:52,00:09:21,00:30:26,00:17:22
+95,Blake Harris,2025-07-19,2025 Americas Triathlon Cup Montreal,continental_cup,sprint,FINISH,32.0,70,0.45714285714285713,00:53:24,00:09:27,00:26:42,00:16:07
+95,Blake Harris,2025-08-09,2025 Americas Triathlon Cup Kelowna,continental_cup,sprint,FINISH,20.0,63,0.31746031746031744,00:54:49,00:10:10,00:27:56,00:15:35
+95,Blake Harris,2025-08-20,2025 Asuncion Junior Pan-American Games,championship,sprint,FINISH,4.0,32,0.125,00:54:51,00:10:51,00:28:00,00:14:53
+95,Blake Harris,2025-10-15,2025 World Triathlon Championship Finals Wollongong,championship,standard,FINISH,43.0,59,0.7288135593220338,01:52:50,00:17:54,00:57:58,00:35:41
+95,Blake Harris,2025-11-02,2025 World Triathlon Cup Vina del Mar,other,sprint,FINISH,30.0,65,0.46153846153846156,00:51:04,00:08:46,00:25:24,00:15:27
+95,Blake Harris,2025-11-09,2025 World Triathlon Cup San Pedro de la Paz,other,sprint,FINISH,44.0,66,0.6666666666666666,00:56:56,00:08:51,00:30:27,00:16:09
+95,Blake Harris,2025-11-15,2025 World Triathlon Cup Florianopolis,other,sprint,FINISH,30.0,64,0.46875,00:55:44,00:10:24,00:28:01,00:15:50
+97,Sullivan Middaugh,2024-03-08,2024 Americas Triathlon Championships Miami,championship,standard,FINISH,3.0,38,0.07894736842105263,01:46:51,00:20:01,00:52:23,00:33:21
+97,Sullivan Middaugh,2024-03-08,2024 Americas Triathlon Championships Miami,championship,standard,FINISH,11.0,70,0.15714285714285714,01:46:51,00:20:01,00:52:23,00:33:21
+97,Sullivan Middaugh,2024-03-17,2024 Americas Triathlon Cup Barbados,continental_cup,sprint,FINISH,4.0,23,0.17391304347826086,00:56:05,00:10:18,00:28:39,00:16:37
+97,Sullivan Middaugh,2024-05-04,2024 Americas Triathlon Cup Calima,continental_cup,sprint,FINISH,1.0,33,0.030303030303030304,00:57:06,00:10:28,00:27:31,00:15:37
+97,Sullivan Middaugh,2024-07-13,2024 Americas Triathlon Cup Magog,continental_cup,sprint,FINISH,6.0,64,0.09375,00:52:00,00:09:35,00:25:59,00:15:56
+97,Sullivan Middaugh,2024-08-10,2024 Americas Triathlon Cup and Central America Caribbean Championships Punta Cana,championship,sprint,FINISH,1.0,66,0.015151515151515152,00:54:54,00:09:54,00:27:37,00:16:11
+97,Sullivan Middaugh,2024-08-24,2024 Americas Triathlon Cup Edmonton,continental_cup,sprint,FINISH,2.0,35,0.05714285714285714,00:50:08,00:07:38,00:24:48,00:15:58
+97,Sullivan Middaugh,2024-09-08,2024 World Triathlon Cup Karlovy Vary,other,standard,FINISH,20.0,52,0.38461538461538464,01:57:19,00:19:23,01:04:40,00:32:27
+97,Sullivan Middaugh,2024-10-17,2024 World Triathlon Championship Finals Torremolinos-Andalucia,championship,standard,FINISH,28.0,70,0.4,01:51:10,00:21:02,00:56:37,00:31:55
+97,Sullivan Middaugh,2024-11-09,2024 World Triathlon Cup Miyazaki,other,sprint,FINISH,23.0,42,0.5476190476190477,00:55:52,00:09:38,00:29:12,00:15:37
+97,Sullivan Middaugh,2025-02-23,2025 World Triathlon Cup Napier,other,sprint,FINISH,9.0,35,0.2571428571428571,00:50:58,00:09:05,00:25:56,00:15:05
+97,Sullivan Middaugh,2025-03-22,2025 Americas Triathlon Cup La Paz,continental_cup,sprint,FINISH,3.0,69,0.043478260869565216,00:53:29,00:11:53,00:26:35,00:14:20
+97,Sullivan Middaugh,2025-03-28,2025 Americas Triathlon Cup Miami,continental_cup,sprint,FINISH,14.0,58,0.2413793103448276,00:50:59,00:09:28,00:24:30,00:16:00
+97,Sullivan Middaugh,2025-06-07,2025 Americas Triathlon Championships Calima,championship,standard,FINISH,2.0,70,0.02857142857142857,01:53:30,00:20:18,00:55:47,00:34:22
+97,Sullivan Middaugh,2025-06-07,2025 Americas Triathlon Championships Calima,championship,standard,FINISH,1.0,38,0.02631578947368421,01:53:30,00:20:18,00:55:47,00:34:22
+97,Sullivan Middaugh,2025-07-12,2025 World Triathlon Championship Series Hamburg,championship,sprint,FINISH,45.0,55,0.8181818181818182,00:54:27,00:09:50,00:28:12,00:15:33
+97,Sullivan Middaugh,2025-08-09,2025 Americas Triathlon Cup Kelowna,continental_cup,sprint,FINISH,5.0,63,0.07936507936507936,00:53:32,00:10:29,00:27:07,00:14:49
+97,Sullivan Middaugh,2025-10-15,2025 World Triathlon Championship Finals Wollongong,championship,standard,FINISH,28.0,59,0.4745762711864407,01:48:44,00:18:42,00:57:07,00:31:43
+97,Sullivan Middaugh,2025-11-02,2025 World Triathlon Cup Vina del Mar,other,sprint,FINISH,23.0,65,0.35384615384615387,00:50:43,00:08:58,00:25:16,00:15:12
+97,Sullivan Middaugh,2025-11-09,2025 World Triathlon Cup San Pedro de la Paz,other,sprint,FINISH,10.0,66,0.15151515151515152,00:55:10,00:09:11,00:30:01,00:14:34
+98,Porter Middaugh,2024-08-10,2024 Americas Triathlon Cup and Central America Caribbean Championships Punta Cana,championship,sprint,FINISH,33.0,66,0.5,00:59:03,00:10:16,00:29:08,00:18:28
+98,Porter Middaugh,2024-10-17,2024 World Triathlon Championship Finals Torremolinos-Andalucia,championship,sprint,FINISH,55.0,71,0.7746478873239436,01:01:21,00:10:48,00:30:11,00:18:47
+98,Porter Middaugh,2025-02-16,2025 Americas Triathlon Cup La Habana,continental_cup,sprint,FINISH,6.0,27,0.2222222222222222,00:54:42,00:09:16,00:29:04,00:15:32
+98,Porter Middaugh,2025-03-22,2025 Americas Triathlon Cup La Paz,continental_cup,sprint,FINISH,10.0,69,0.14492753623188406,00:53:48,00:11:37,00:26:51,00:14:35
+98,Porter Middaugh,2025-03-28,2025 Americas Triathlon Cup Miami,continental_cup,sprint,FINISH,19.0,58,0.3275862068965517,00:51:24,00:09:33,00:24:33,00:16:16
+98,Porter Middaugh,2025-06-07,2025 Americas Triathlon Championships Calima,championship,standard,DNF,,38,,DNF,00:20:39,00:22:17,00:00:00
+98,Porter Middaugh,2025-06-07,2025 Americas Triathlon Championships Calima,championship,standard,DNF,,70,,DNF,00:20:39,00:22:17,00:00:00
+98,Porter Middaugh,2025-07-12,2025 Americas Triathlon Cup Magog,continental_cup,sprint,FINISH,1.0,70,0.014285714285714285,00:55:31,00:09:20,00:30:28,00:15:03
+98,Porter Middaugh,2025-07-19,2025 Americas Triathlon Cup Montreal,continental_cup,sprint,FINISH,35.0,70,0.5,00:53:46,00:09:53,00:27:00,00:15:53
+98,Porter Middaugh,2025-08-09,2025 Americas Triathlon Cup Kelowna,continental_cup,sprint,FINISH,18.0,63,0.2857142857142857,00:54:45,00:10:34,00:27:31,00:15:35
+98,Porter Middaugh,2025-10-15,2025 World Triathlon Championship Finals Wollongong,championship,standard,LAP,,59,,LAP,00:17:56,00:00:00,00:00:00
+98,Porter Middaugh,2025-11-02,2025 Americas Triathlon Cup Vina del Mar,continental_cup,sprint,FINISH,8.0,69,0.11594202898550725,00:55:19,00:11:46,00:26:59,00:15:10
