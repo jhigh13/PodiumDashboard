@@ -1,7 +1,15 @@
 <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end; justify-content:space-between;">
   <div>
     <div class="muted">Year</div>
-    <select id="race_year" name="race_year">
+    <select
+      id="race_year"
+      name="race_year"
+      hx-get="/partials/race_performance"
+      hx-trigger="change"
+      hx-target="#race-performance"
+      hx-include="#controls, #race_year"
+      hx-swap="innerHTML"
+    >
       {% for y in years %}
         <option value="{{ y }}" {% if y == selected_year %}selected{% endif %}>{{ y }}</option>
       {% endfor %}

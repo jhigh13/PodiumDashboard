@@ -5,6 +5,20 @@
   <div class="col card" style="margin-bottom:0;">
     <h4 style="margin-top:0;">{{ title }}</h4>
     {% if fig_json %}
+    <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-bottom:6px;">
+      <label style="font-size:0.85rem; cursor:pointer;">
+        <input type="checkbox" id="toggle-race-a" checked> Race A
+      </label>
+      <label style="font-size:0.85rem; cursor:pointer;">
+        <input type="checkbox" id="toggle-race-b" checked> Race B
+      </label>
+      <label style="font-size:0.85rem; display:flex; align-items:center; gap:5px;">
+        Smooth:
+        <input type="range" id="smooth-slider" min="1" max="60" value="1" style="width:120px;">
+        <span id="smooth-label" style="min-width:28px;">1</span>
+      </label>
+      <span id="live-metrics" style="font-size:0.82rem; color:#555; margin-left:auto; text-align:right;"></span>
+    </div>
     <div id="chart-tp-compare" data-fig="{{ fig_json | e }}" style="height:420px;"></div>
     <script>
       (function () {
@@ -14,8 +28,182 @@
         const raw = el.dataset.fig;
         if (!raw) return;
         const fig = JSON.parse(raw);
-        const config = { displayModeBar: false, responsive: true };
+        const config = { displayModeBar: true, modeBarButtonsToRemove: ['toImage','sendDataToCloud'], responsive: true };
+
+        /* Store original y-values for smoothing */
+        var origY = fig.data.map(function(t) { return t.y ? t.y.slice() : []; });
+
         Plotly.react(el, fig.data, fig.layout, config);
+
+        /* ── Toggle Race A / Race B visibility ── */
+        function updateVisibility() {
+          var showA = document.getElementById('toggle-race-a').checked;
+          var showB = document.getElementById('toggle-race-b').checked;
+          var vis = fig.data.map(function(t) {
+            var n = (t.name || '').toLowerCase();
+            /* Keep hidden data traces always invisible */
+            if (n.indexOf('speed') >= 0 && t.visible === false) return false;
+            if (n.indexOf('race a') >= 0) return showA ? true : 'legendonly';
+            if (n.indexOf('race b') >= 0) return showB ? true : 'legendonly';
+            return true;
+          });
+          Plotly.restyle(el, { visible: vis });
+        }
+        document.getElementById('toggle-race-a').addEventListener('change', function() { updateVisibility(); updateMetrics(); });
+        document.getElementById('toggle-race-b').addEventListener('change', function() { updateVisibility(); updateMetrics(); });
+
+        /* ── Smoothing (rolling average) ── */
+        function rollingAvg(arr, w) {
+          if (w <= 1) return arr;
+          var out = new Array(arr.length);
+          for (var i = 0; i < arr.length; i++) {
+            var sum = 0, cnt = 0;
+            var lo = Math.max(0, i - Math.floor(w / 2));
+            var hi = Math.min(arr.length - 1, i + Math.floor(w / 2));
+            for (var j = lo; j <= hi; j++) {
+              if (arr[j] != null) { sum += arr[j]; cnt++; }
+            }
+            out[i] = cnt > 0 ? sum / cnt : null;
+          }
+          return out;
+        }
+        var slider = document.getElementById('smooth-slider');
+        var label = document.getElementById('smooth-label');
+        slider.addEventListener('input', function() {
+          var w = parseInt(slider.value);
+          label.textContent = w;
+          var updates = {};
+          for (var i = 0; i < fig.data.length; i++) {
+            var name = (fig.data[i].name || '').toLowerCase();
+            /* Only smooth primary traces (power/pace), not HR */
+            if (name.indexOf('hr') < 0 && name.indexOf('heart') < 0) {
+              if (!updates.y) updates.y = origY.map(function(y) { return y; });
+              updates.y[i] = rollingAvg(origY[i], w);
+            }
+          }
+          if (updates.y) {
+            for (var i = 0; i < fig.data.length; i++) {
+              Plotly.restyle(el, { y: [updates.y[i]] }, [i]);
+            }
+          }
+        });
+
+        /* ── Live metrics computation ── */
+        var sport = '{{ sport }}';
+        var zoomLo = null, zoomHi = null;
+
+        function avgInRange(traceIdx, lo, hi) {
+          var t = fig.data[traceIdx];
+          if (!t || !t.x || !t.y) return null;
+          var sum = 0, cnt = 0;
+          for (var i = 0; i < t.x.length; i++) {
+            if (lo != null && t.x[i] < lo) continue;
+            if (hi != null && t.x[i] > hi) continue;
+            var v = origY[traceIdx][i];
+            if (v != null && v > 0) { sum += v; cnt++; }
+          }
+          return cnt > 0 ? sum / cnt : null;
+        }
+
+        function fmtPace(minPerMile) {
+          if (minPerMile == null) return '--';
+          var m = Math.floor(minPerMile);
+          var s = Math.round((minPerMile - m) * 60);
+          if (s === 60) { m++; s = 0; }
+          return m + ':' + (s < 10 ? '0' : '') + s;
+        }
+
+        function updateMetrics() {
+          var showA = document.getElementById('toggle-race-a').checked;
+          var showB = document.getElementById('toggle-race-b').checked;
+          var parts = [];
+          var lo = zoomLo, hi = zoomHi;
+
+          if (sport === 'bike') {
+            /* Find trace indices by name */
+            var pwrA = -1, pwrB = -1, spdA = -1, spdB = -1;
+            for (var i = 0; i < fig.data.length; i++) {
+              var n = (fig.data[i].name || '').toLowerCase();
+              if (n === 'race a power') pwrA = i;
+              if (n === 'race b power') pwrB = i;
+              if (n === 'race a speed') spdA = i;
+              if (n === 'race b speed') spdB = i;
+            }
+            if (showA && pwrA >= 0) {
+              var ap = avgInRange(pwrA, lo, hi);
+              var as = avgInRange(spdA, lo, hi);
+              parts.push('<b style="color:#dc2626">A:</b> ' +
+                (ap != null ? ap.toFixed(0) + ' W' : '--') + ' / ' +
+                (as != null ? as.toFixed(1) + ' km/h' : '--'));
+            }
+            if (showB && pwrB >= 0) {
+              var bp = avgInRange(pwrB, lo, hi);
+              var bs = avgInRange(spdB, lo, hi);
+              parts.push('<b style="color:#2563eb">B:</b> ' +
+                (bp != null ? bp.toFixed(0) + ' W' : '--') + ' / ' +
+                (bs != null ? bs.toFixed(1) + ' km/h' : '--'));
+            }
+          } else if (sport === 'run') {
+            var paceA = -1, paceB = -1;
+            for (var i = 0; i < fig.data.length; i++) {
+              var n = (fig.data[i].name || '').toLowerCase();
+              if (n === 'race a pace') paceA = i;
+              if (n === 'race b pace') paceB = i;
+            }
+            if (showA && paceA >= 0) {
+              var ap = avgInRange(paceA, lo, hi);
+              parts.push('<b style="color:#dc2626">A:</b> ' + fmtPace(ap) + ' /mi');
+            }
+            if (showB && paceB >= 0) {
+              var bp = avgInRange(paceB, lo, hi);
+              parts.push('<b style="color:#2563eb">B:</b> ' + fmtPace(bp) + ' /mi');
+            }
+          } else {
+            /* swim */
+            var paceA = -1, paceB = -1;
+            for (var i = 0; i < fig.data.length; i++) {
+              var n = (fig.data[i].name || '').toLowerCase();
+              if (n === 'race a pace') paceA = i;
+              if (n === 'race b pace') paceB = i;
+            }
+            if (showA && paceA >= 0) {
+              var ap = avgInRange(paceA, lo, hi);
+              parts.push('<b style="color:#dc2626">A:</b> ' + fmtPace(ap) + ' /100m');
+            }
+            if (showB && paceB >= 0) {
+              var bp = avgInRange(paceB, lo, hi);
+              parts.push('<b style="color:#2563eb">B:</b> ' + fmtPace(bp) + ' /100m');
+            }
+          }
+          var el2 = document.getElementById('live-metrics');
+          if (el2) el2.innerHTML = parts.length ? ('Avg: ' + parts.join(' &nbsp;|&nbsp; ')) : '';
+        }
+        updateMetrics();
+
+        /* ── Track zoom range and update download links ── */
+        /* Chart x-axis is in minutes; endpoint expects seconds. */
+        el.on('plotly_relayout', function(ed) {
+          var loMin = (ed['xaxis.range[0]'] != null) ? ed['xaxis.range[0]'] : null;
+          var hiMin = (ed['xaxis.range[1]'] != null) ? ed['xaxis.range[1]'] : null;
+          /* autorange reset */
+          if (ed['xaxis.autorange']) { loMin = null; hiMin = null; }
+          document.querySelectorAll('a.dl-zoom-xlsx').forEach(function(a) {
+            var base = a.dataset.baseHref;
+            if (loMin != null && hiMin != null) {
+              var loSec = Math.floor(loMin * 60);
+              var hiSec = Math.ceil(hiMin * 60);
+              a.href = base + '&t_start=' + loSec + '&t_end=' + hiSec;
+              a.style.display = '';
+            } else {
+              a.href = base;
+              a.style.display = 'none';
+            }
+          });
+          var hint = document.getElementById('zoom-download-hint');
+          if (hint) hint.style.display = (loMin != null && hiMin != null) ? 'none' : '';
+          zoomLo = loMin; zoomHi = hiMin;
+          updateMetrics();
+        });
       })();
     </script>
     {% else %}
@@ -27,25 +215,54 @@
     {% endif %}
 
     {% if tp_workout_a or tp_workout_b %}
-    <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
+    <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
       {% if tp_workout_a %}
       <a class="btn"
         href="/api/timeseries_csv?target_athlete_id={{ target_athlete_id }}&tp_workout_id={{ tp_workout_a }}&sport={{ sport }}&race_label={{ (race_label_a or '')|urlencode }}&athlete_short={{ (athlete_short or '')|urlencode }}"
         download style="text-decoration:none; font-size:0.85rem;">
-        &#x2B07; Download Race A CSV
-        {% if sport == 'bike' %}(speed, power, HR, cadence, elevation){% else %}(speed, HR, cadence, elevation){% endif
-        %}
+        &#x2B07; Race A CSV
+      </a>
+      <a class="btn"
+        href="/api/timeseries_xlsx?target_athlete_id={{ target_athlete_id }}&tp_workout_id={{ tp_workout_a }}&sport={{ sport }}&race_label={{ (race_label_a or '')|urlencode }}&athlete_short={{ (athlete_short or '')|urlencode }}"
+        download style="text-decoration:none; font-size:0.85rem; background:#217346; border-color:#217346;">
+        &#x2B07; Race A Excel
+      </a>
+      <a class="btn"
+        href="/api/timeseries_xlsx?target_athlete_id={{ target_athlete_id }}&tp_workout_id={{ tp_workout_a }}&sport={{ sport }}&race_label={{ (race_label_a or '')|urlencode }}&athlete_short={{ (athlete_short or '')|urlencode }}&trimmed=true"
+        download style="text-decoration:none; font-size:0.85rem; background:#5B2C6F; border-color:#5B2C6F;">
+        &#x2B07; Race A Excel (race only)
+      </a>
+      <a class="btn dl-zoom-xlsx" style="display:none; text-decoration:none; font-size:0.85rem; background:#B7410E; border-color:#B7410E;"
+        data-base-href="/api/timeseries_xlsx?target_athlete_id={{ target_athlete_id }}&tp_workout_id={{ tp_workout_a }}&sport={{ sport }}&race_label={{ (race_label_a or '')|urlencode }}&athlete_short={{ (athlete_short or '')|urlencode }}"
+        href="#" download>
+        &#x2B07; Race A Excel (zoomed)
       </a>
       {% endif %}
       {% if tp_workout_b %}
       <a class="btn"
         href="/api/timeseries_csv?target_athlete_id={{ target_athlete_id }}&tp_workout_id={{ tp_workout_b }}&sport={{ sport }}&race_label={{ (race_label_b or '')|urlencode }}&athlete_short={{ (athlete_short or '')|urlencode }}"
         download style="text-decoration:none; font-size:0.85rem;">
-        &#x2B07; Download Race B CSV
-        {% if sport == 'bike' %}(speed, power, HR, cadence, elevation){% else %}(speed, HR, cadence, elevation){% endif
-        %}
+        &#x2B07; Race B CSV
+      </a>
+      <a class="btn"
+        href="/api/timeseries_xlsx?target_athlete_id={{ target_athlete_id }}&tp_workout_id={{ tp_workout_b }}&sport={{ sport }}&race_label={{ (race_label_b or '')|urlencode }}&athlete_short={{ (athlete_short or '')|urlencode }}"
+        download style="text-decoration:none; font-size:0.85rem; background:#217346; border-color:#217346;">
+        &#x2B07; Race B Excel
+      </a>
+      <a class="btn"
+        href="/api/timeseries_xlsx?target_athlete_id={{ target_athlete_id }}&tp_workout_id={{ tp_workout_b }}&sport={{ sport }}&race_label={{ (race_label_b or '')|urlencode }}&athlete_short={{ (athlete_short or '')|urlencode }}&trimmed=true"
+        download style="text-decoration:none; font-size:0.85rem; background:#5B2C6F; border-color:#5B2C6F;">
+        &#x2B07; Race B Excel (race only)
+      </a>
+      <a class="btn dl-zoom-xlsx" style="display:none; text-decoration:none; font-size:0.85rem; background:#B7410E; border-color:#B7410E;"
+        data-base-href="/api/timeseries_xlsx?target_athlete_id={{ target_athlete_id }}&tp_workout_id={{ tp_workout_b }}&sport={{ sport }}&race_label={{ (race_label_b or '')|urlencode }}&athlete_short={{ (athlete_short or '')|urlencode }}"
+        href="#" download>
+        &#x2B07; Race B Excel (zoomed)
       </a>
       {% endif %}
+    </div>
+    <div id="zoom-download-hint" class="muted" style="margin-top:6px; font-size:0.8rem;">
+      Tip: zoom the chart to a time range, then a &ldquo;zoomed&rdquo; download button will appear.
     </div>
     {% endif %}
   </div>

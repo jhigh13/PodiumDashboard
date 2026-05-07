@@ -8,7 +8,7 @@ import json
 from typing import Optional
 
 import requests
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -35,13 +35,19 @@ from app.services import compliance as compliance_service
 from app.services.baseline import calculate_baselines, check_alert_conditions, get_baseline_asof
 from app.services.tp_api import get_api
 from app.services.tokens import get_token as get_token_row, find_coach_token
-from app.services.race_results import load_local_race_results, pick_best_worst
+from app.services.race_results import (
+    load_local_race_results,
+    pick_best_worst,
+    sync_race_results_last_two_years,
+)
 from app.services.workout_cache import (
     fetch_timeseries_cached,
     normalize_timeseries_rows,
     extract_workout_summary,
     extract_lap_summaries,
     is_timeseries_cached,
+    parse_fit_to_timeseries,
+    save_timeseries,
 )
 from app.services.recovery_alerts import evaluate_recovery_alert
 from app.services.recovery_alert_runs import list_recovery_alert_runs, upsert_recovery_alert_run
@@ -1031,7 +1037,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=403, detail="Forbidden")
 
         races_all = load_local_race_results(int(target_athlete_id))
-        years = sorted(
+        years_with_data = sorted(
             {
                 int(r["event_date"].year)
                 for r in races_all
@@ -1039,8 +1045,9 @@ def create_app() -> FastAPI:
             },
             reverse=True,
         )
+        years = sorted(set(years_with_data).union({date.today().year}), reverse=True)
 
-        if not years:
+        if not years_with_data:
             return templates.TemplateResponse(
                 "partials/race_performance.html",
                 {
@@ -1057,13 +1064,14 @@ def create_app() -> FastAPI:
                 },
             )
 
+        default_year = years_with_data[0]
         selected_year: int
         try:
-            selected_year = int(race_year) if race_year is not None and str(race_year).strip() else years[0]
+            selected_year = int(race_year) if race_year is not None and str(race_year).strip() else default_year
         except Exception:
-            selected_year = years[0]
+            selected_year = default_year
         if selected_year not in years:
-            selected_year = years[0]
+            selected_year = default_year
 
         races_year = [
             r
@@ -1711,21 +1719,39 @@ def create_app() -> FastAPI:
                 {"request": request, "error": "Race selection not found in local cache."},
             )
 
-        if not athlete or not athlete.tp_athlete_id:
-            return templates.TemplateResponse(
-                "partials/race_tp_compare.html",
-                {"request": request, "error": "This athlete is missing a TrainingPeaks athlete ID (tp_athlete_id). Sync roster/workouts first."},
-            )
+        has_tp = athlete and athlete.tp_athlete_id
+        api = get_api(int(target_athlete_id)) if has_tp else None
 
-        api = get_api(int(target_athlete_id))
+        def _manual_workouts() -> list[dict]:
+            """Return all manually-uploaded FIT workouts (tp_workout_id starts with 'manual_')."""
+            with get_session() as s:
+                rows = s.execute(
+                    select(Workout)
+                    .where(Workout.athlete_id == int(target_athlete_id))
+                    .where(Workout.tp_workout_id.like("manual_%"))
+                    .order_by(Workout.date.desc())
+                ).scalars().all()
+            out: list[dict] = []
+            for w in rows:
+                sport_str = str(w.sport or "")
+                dur_str = _format_duration(int(w.duration_sec)) if w.duration_sec else ""
+                raw = w.raw_json or {}
+                label_parts = [f"📎 {w.date}", sport_str, str(raw.get("label") or "Uploaded FIT")]
+                if dur_str:
+                    label_parts.append(dur_str)
+                out.append({"workout_id": str(w.tp_workout_id), "sport": sport_str, "duration_sec": w.duration_sec, "label": " • ".join(p for p in label_parts if p)})
+            return out
 
         def _tp_workouts_for_day(d: date) -> list[dict]:
             start = d - timedelta(days=1)
             end = d + timedelta(days=1)
+            manual = _manual_workouts()
+            if not has_tp:
+                return manual
             try:
                 workouts = api.fetch_workouts(start, end, tp_athlete_id=int(athlete.tp_athlete_id))
             except Exception as e:  # noqa: BLE001
-                return [{"workout_id": "", "label": f"(Error fetching workouts: {e})"}]
+                return manual or [{"workout_id": "", "label": f"(Error fetching workouts: {e})"}]
 
             out: list[dict] = []
             for w in workouts or []:
@@ -1775,7 +1801,9 @@ def create_app() -> FastAPI:
                     label = f"{label} — {', '.join(meta)}"
                 out.append({"workout_id": str(wid), "sport": str(sport or ""), "duration_sec": dur_sec, "label": label})
 
-            # Prefer matches first, then longer workouts.
+            # Include manually-uploaded FIT workouts (prepend so they always appear)
+            out = manual + out
+            # Prefer matches first, then longer workouts (manual uploads sort last by label prefix).
             out.sort(
                 key=lambda x: (
                     0 if _sport_matches(x.get("sport"), selected_sport) else 1,
@@ -1808,6 +1836,8 @@ def create_app() -> FastAPI:
         def _precache_workout(wid: str):
             if not wid or is_timeseries_cached(wid):
                 return
+            if not has_tp or not athlete.tp_athlete_id:
+                return  # manual uploads are already cached; skip TP fetch for non-TP athletes
             try:
                 fetch_timeseries_cached(api, wid, int(athlete.tp_athlete_id))
             except Exception:
@@ -1978,21 +2008,34 @@ def create_app() -> FastAPI:
         with get_session() as session:
             athlete = session.get(Athlete, int(target_athlete_id))
 
-        if not athlete or not athlete.tp_athlete_id:
+        all_manual = wid_a.startswith("manual_") and wid_b.startswith("manual_")
+        has_tp = athlete and athlete.tp_athlete_id
+        if not all_manual and not has_tp:
             return templates.TemplateResponse(
                 "partials/race_tp_traces.html",
-                {"request": request, "error": "Missing tp_athlete_id for this athlete.", "fig_json": None, "title": "", "notes": None},
+                {"request": request, "error": "Missing tp_athlete_id for this athlete. Upload FIT files manually instead.", "fig_json": None, "title": "", "notes": None},
             )
 
-        api = get_api(int(target_athlete_id))
-        tp_aid = int(athlete.tp_athlete_id)
+        api = get_api(int(target_athlete_id)) if has_tp else None
+        tp_aid = int(athlete.tp_athlete_id) if has_tp else 0
         cache_note_parts: list[str] = []
         try:
+            from app.services.workout_cache import get_cached_timeseries
+
+            def _load_timeseries(wid: str) -> dict:
+                # For manually uploaded FIT, always use disk cache (no API needed)
+                if wid.startswith("manual_"):
+                    cached = get_cached_timeseries(wid)
+                    if cached is None:
+                        raise RuntimeError(f"Uploaded workout not found in cache ({wid}). Please re-upload the FIT file.")
+                    return cached
+                return fetch_timeseries_cached(api, wid, tp_aid)
+
             # Cache-through: check disk cache first, fetch from API only on miss
             a_cached = is_timeseries_cached(wid_a)
             b_cached = is_timeseries_cached(wid_b)
-            data_a = fetch_timeseries_cached(api, wid_a, tp_aid)
-            data_b = fetch_timeseries_cached(api, wid_b, tp_aid)
+            data_a = _load_timeseries(wid_a)
+            data_b = _load_timeseries(wid_b)
             if a_cached and b_cached:
                 cache_note_parts.append("Both workouts loaded from cache (instant).")
             elif a_cached or b_cached:
@@ -2110,6 +2153,12 @@ def create_app() -> FastAPI:
             else:
                 notes = "No power channel found; showing HR if available."
 
+            # Hidden speed traces for client-side avg speed computation
+            speed_a_kmh = [(v * 3.6 if v is not None and v > 0 else None) for v in s_a["speed"]]
+            speed_b_kmh = [(v * 3.6 if v is not None and v > 0 else None) for v in s_b["speed"]]
+            fig.add_trace(go.Scatter(x=s_a["x_min"], y=speed_a_kmh, mode="lines", name="Race A Speed", visible=False))
+            fig.add_trace(go.Scatter(x=s_b["x_min"], y=speed_b_kmh, mode="lines", name="Race B Speed", visible=False))
+
             if any(v is not None for v in s_a["hr"]) or any(v is not None for v in s_b["hr"]):
                 fig.add_trace(go.Scatter(x=s_a["x_min"], y=s_a["hr"], mode="lines", name="Race A HR", line=dict(color="#dc2626", width=1, dash="dot"), yaxis="y2"))
                 fig.add_trace(go.Scatter(x=s_b["x_min"], y=s_b["hr"], mode="lines", name="Race B HR", line=dict(color="#2563eb", width=1, dash="dot"), yaxis="y2"))
@@ -2195,6 +2244,154 @@ def create_app() -> FastAPI:
                 "race_label_b": race_label_b,
                 "athlete_short": athlete_short,
             },
+        )
+
+    @app.post("/actions/sync_race_results", response_class=HTMLResponse)
+    def action_sync_race_results(
+        request: Request,
+        target_athlete_id: int = Form(...),
+        requester_id: int = Depends(require_login),
+    ):
+        role = request.session.get("role") or "athlete"
+        if not can_access_athlete(requester_id, role, int(target_athlete_id)):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        try:
+            summary = sync_race_results_last_two_years(int(target_athlete_id))
+        except Exception as e:
+            return HTMLResponse(f"<div class='muted'>Race sync failed: {e}</div>")
+
+        years = sorted(
+            {
+                int(r["event_date"].year)
+                for r in load_local_race_results(int(target_athlete_id))
+                if isinstance(r.get("event_date"), date)
+            },
+            reverse=True,
+        )
+        years_text = ", ".join(str(y) for y in years) if years else "none"
+
+        inserted = int(summary.get("inserted") or 0)
+        range_txt = str(summary.get("range") or "window unknown")
+        return HTMLResponse(
+            f"<div class='muted'>"
+            f"Race sync complete: inserted {inserted} rows ({range_txt}). Years in cache: {years_text}."
+            "</div>"
+            "<script>"
+            "(function () {"
+            "  if (window.htmx) {"
+            "    htmx.trigger(document.body, 'podiumRefresh');"
+            "  }"
+            "})();"
+            "</script>"
+        )
+
+    # ── Manual FIT file upload ────────────────────────────────────────────────
+    @app.post("/actions/upload_fit", response_class=HTMLResponse)
+    async def action_upload_fit(
+        request: Request,
+        file: UploadFile = File(...),
+        target_athlete_id: int = Form(...),
+        sport: str = Form("run"),
+        label: str = Form(""),
+        requester_id: int = Depends(require_login),
+    ):
+        role = request.session.get("role") or "athlete"
+        if not can_access_athlete(requester_id, role, target_athlete_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        filename = file.filename or ""
+        if not filename.lower().endswith(".fit"):
+            return HTMLResponse("<div class='muted'>Only .fit files are supported.</div>")
+
+        content = await file.read()
+        if not content:
+            return HTMLResponse("<div class='muted'>Uploaded file is empty.</div>")
+
+        # Parse FIT bytes → timeseries
+        try:
+            payload = parse_fit_to_timeseries(content)
+        except Exception as e:
+            return HTMLResponse(f"<div class='muted'>Could not parse FIT file: {e}</div>")
+
+        channels = (payload.get("WorkoutChannels") or {}).get("Channels") or []
+        data_rows = (payload.get("WorkoutChannels") or {}).get("Data") or []
+        if not data_rows:
+            return HTMLResponse("<div class='muted'>FIT file parsed but contained no time-series records.</div>")
+
+        # Extract date and sport from FIT session if available
+        import io, hashlib
+        try:
+            import fitparse
+            fit = fitparse.FitFile(io.BytesIO(content))
+            sessions = list(fit.get_messages("session"))
+            if sessions:
+                start_ts = sessions[0].get_value("start_time")
+                fit_date = start_ts.date() if start_ts and hasattr(start_ts, "date") else None
+                fit_sport_raw = sessions[0].get_value("sport") or ""
+                # normalize fitparse sport string (e.g. "cycling" → "bike")
+                fs = str(fit_sport_raw).lower()
+                if fs in ("cycling", "bike", "biking"):
+                    fit_sport = "bike"
+                elif fs in ("swimming", "swim"):
+                    fit_sport = "swim"
+                elif fs in ("running", "run"):
+                    fit_sport = "run"
+                else:
+                    fit_sport = sport  # fall back to form value
+                if fit_date:
+                    workout_date = fit_date
+                else:
+                    workout_date = date.today()
+                sport = fit_sport
+            else:
+                workout_date = date.today()
+        except Exception:
+            workout_date = date.today()
+
+        # Stable ID based on content hash
+        digest = hashlib.sha256(content).hexdigest()[:14]
+        workout_id = f"manual_{digest}"
+
+        # Save to timeseries cache
+        save_timeseries(workout_id, payload)
+
+        # Upsert a Workout row so it appears in the compare dropdown
+        duration_sec: int | None = None
+        if data_rows:
+            last_ms = data_rows[-1].get("MillisecondOffset") or 0
+            try:
+                duration_sec = int(float(last_ms) / 1000)
+            except Exception:
+                duration_sec = None
+
+        with get_session() as session:
+            existing = session.execute(
+                select(Workout).where(Workout.tp_workout_id == workout_id).limit(1)
+            ).scalars().first()
+            if existing:
+                existing.date = workout_date
+                existing.sport = sport
+                existing.duration_sec = duration_sec
+                existing.raw_json = {"label": label or filename, "channels": channels}
+            else:
+                session.add(Workout(
+                    athlete_id=int(target_athlete_id),
+                    tp_workout_id=workout_id,
+                    date=workout_date,
+                    sport=sport,
+                    duration_sec=duration_sec,
+                    raw_json={"label": label or filename, "channels": channels},
+                ))
+            session.commit()
+
+        dur_str = _format_duration(duration_sec) if duration_sec else "?"
+        display_label = label or filename
+        return HTMLResponse(
+            f"<div class='muted' style='color:#16a34a;'>"
+            f"✓ Uploaded: {display_label} — {workout_date} • {sport} • {dur_str} • {len(data_rows):,} points"
+            f"</div>"
+            f"<div class='muted' style='margin-top:4px;'>This workout will now appear in the Race Day comparison dropdowns for races around {workout_date}.</div>"
         )
 
     # ── Timeseries CSV download ──────────────────────────────────────────────
@@ -2306,6 +2503,220 @@ def create_app() -> FastAPI:
         return StreamingResponse(
             buf,
             media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.get("/api/timeseries_xlsx")
+    def api_timeseries_xlsx(
+        request: Request,
+        target_athlete_id: int,
+        tp_workout_id: str,
+        sport: str = "run",
+        race_label: str = "",
+        athlete_short: str = "",
+        trimmed: bool = False,
+        t_start: float | None = None,
+        t_end: float | None = None,
+        requester_id: int = Depends(require_login),
+    ):
+        """Download time series as Excel matching the lab-software template.
+
+        Row 1: time | value | (empty C–AR)
+        Row 2: (s) | (m/s or watt) | 32 fixed lab variable names (C–AH) |
+               sensor data labels replacing Var1–Var10 (AI–AR)
+        Data:  time | power-or-speed | empty C–AH | sensor values in AI+
+
+        Optional filters (applied before trimming):
+        - t_start / t_end: keep only rows within this time window (seconds).
+          Typically set from the chart zoom range.
+        - trimmed=true: additionally strip leading zeros and trailing zeros,
+          skipping past large time gaps (>60 s).
+        Time is always reset to start at 0 when any filter is active.
+        """
+        import io
+        from openpyxl import Workbook
+        from openpyxl.styles import Font
+
+        role = request.session.get("role") or "athlete"
+        if not can_access_athlete(requester_id, role, target_athlete_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        wid = tp_workout_id.strip()
+        if not wid:
+            raise HTTPException(status_code=400, detail="Missing tp_workout_id")
+
+        with get_session() as session:
+            athlete = session.get(Athlete, int(target_athlete_id))
+        if not athlete or not athlete.tp_athlete_id:
+            raise HTTPException(status_code=404, detail="Athlete not found or missing tp_athlete_id")
+
+        api = get_api(int(target_athlete_id))
+        tp_aid = int(athlete.tp_athlete_id)
+
+        try:
+            payload = fetch_timeseries_cached(api, wid, tp_aid)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Could not load timeseries: {e}")
+
+        channels, rows = _extract_channels_payload(payload)
+        if not rows:
+            raise HTTPException(status_code=404, detail="No timeseries data in this workout")
+
+        idx_time = _find_channel_index(channels, {"millisecondoffset", "time", "seconds", "sec", "elapsedtime", "elapsedseconds"})
+        idx_speed = _find_channel_index(channels, {"speed", "velocity", "vel"})
+        idx_power = _find_channel_index(channels, {"power", "watts", "w"})
+        idx_hr = _find_channel_index(channels, {"heartrate", "hr"})
+        idx_cadence = _find_channel_index(channels, {"cadence"})
+        idx_elevation = _find_channel_index(channels, {"elevation", "altitude", "alt"})
+
+        time_is_ms = False
+        if idx_time is not None:
+            ch_name = (channels[idx_time] or "").strip().lower().replace(" ", "")
+            time_is_ms = "millisecond" in ch_name
+
+        sport_norm = _sport_norm(sport) or "run"
+        is_bike = sport_norm == "bike"
+
+        # 32 fixed lab variable names for columns C (3) through AH (34)
+        LAB_VARS = [
+            "LaB_meas", "VO2_meas", "Fat-g/h_meas", "CHO-g/h_meas",
+            "PCr_meas", "ATP_meas", "Pi_meas", "pHB_meas", "pHM_meas",
+            "Hb-Ox_meas", "%OX_meas", "SO2%_meas",
+            "LaB_static", "VO2_static", "phM_static", "Fat-g/h_static",
+            "CHO-g/h_static", "VLa_static", "%aerob_static", "%anaerobic_static",
+            "cdA", "Crr", "Torso_angle", "knee_angle",
+            "pressure", "altitude", "yaw", "effect_wind",
+            "Torque", "Force", "CHO_intake", "Glycogen",
+        ]  # 32 items → cols C–AH
+
+        # Sensor data labels replace Var1_meas … Var10_meas (cols AI–AR)
+        REMAINING_VARS = 10  # Var1 through Var10 slot
+        if is_bike:
+            sensor_labels = ["Speed", "HeartRate", "Cadence", "Elevation"]
+        else:
+            sensor_labels = ["HeartRate", "Cadence", "Elevation"]
+        var_labels = sensor_labels + [
+            f"Var{i}_meas" for i in range(len(sensor_labels) + 1, REMAINING_VARS + 1)
+        ]
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Data"
+
+        # Row 1: only time and value have text; rest empty through col AR
+        row1 = ["time", "value"] + [None] * len(LAB_VARS) + [None] * REMAINING_VARS
+        ws.append(row1)
+
+        # Row 2: units + all variable names (red font)
+        row2 = ["(s)", "(m/s or watt)"] + LAB_VARS + var_labels
+        ws.append(row2)
+        red_font = Font(color="FF0000")
+        for cell in ws[2]:
+            cell.font = red_font
+
+        # Helper
+        def _num(row, idx):
+            if idx is None or idx >= len(row):
+                return None
+            v = row[idx]
+            if v is None:
+                return None
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                return None
+
+        # Build parsed rows (for optional trimming)
+        parsed = []
+        for r in rows:
+            t_sec = None
+            if idx_time is not None and idx_time < len(r):
+                try:
+                    raw_t = float(r[idx_time])
+                    t_sec = raw_t / 1000.0 if time_is_ms else raw_t
+                except Exception:
+                    pass
+
+            speed = _num(r, idx_speed) or 0.0
+            power = _num(r, idx_power) or 0.0
+            value = power if is_bike else speed
+
+            if is_bike:
+                sensors = [_num(r, idx_speed), _num(r, idx_hr), _num(r, idx_cadence), _num(r, idx_elevation)]
+            else:
+                sensors = [_num(r, idx_hr), _num(r, idx_cadence), _num(r, idx_elevation)]
+
+            parsed.append((t_sec, value, speed, power, sensors))
+
+        # ── Time-window filter (from chart zoom) ────────────────────
+        if t_start is not None or t_end is not None:
+            lo = t_start if t_start is not None else float('-inf')
+            hi = t_end if t_end is not None else float('inf')
+            parsed = [(t, val, spd, pwr, sn) for (t, val, spd, pwr, sn) in parsed
+                      if t is not None and lo <= t <= hi]
+
+        if trimmed and parsed:
+            # Trim leading dead time: skip until speed > 0
+            start = 0
+            for i, (t, val, spd, pwr, sn) in enumerate(parsed):
+                if spd > 0:
+                    start = i
+                    break
+
+            # If there's a large time gap (>60 s) after initial movement,
+            # the real race starts after the last big gap.
+            for i in range(start + 1, len(parsed)):
+                prev_t = parsed[i - 1][0]
+                cur_t = parsed[i][0]
+                if prev_t is not None and cur_t is not None and (cur_t - prev_t) > 60:
+                    start = i
+
+            # Trim trailing dead time (scan from end)
+            end = len(parsed) - 1
+            if is_bike:
+                for i in range(len(parsed) - 1, start - 1, -1):
+                    if parsed[i][2] > 0 or parsed[i][3] > 0:
+                        end = i
+                        break
+            else:
+                for i in range(len(parsed) - 1, start - 1, -1):
+                    if parsed[i][2] > 0:
+                        end = i
+                        break
+
+            parsed = parsed[start:end + 1]
+
+        # Reset time to start at 0 whenever any filtering was applied
+        if (trimmed or t_start is not None or t_end is not None) and parsed:
+            if parsed[0][0] is not None:
+                t_offset = parsed[0][0]
+                parsed = [(((t - t_offset) if t is not None else None), val, spd, pwr, sn)
+                          for (t, val, spd, pwr, sn) in parsed]
+
+        # Write data rows: A=time, B=value, C–AH empty, AI+ sensors
+        empty_lab = [None] * len(LAB_VARS)
+        empty_remaining = [None] * (REMAINING_VARS - len(sensor_labels))
+        for (t_sec, value, _spd, _pwr, sensors) in parsed:
+            ws.append([t_sec, value] + empty_lab + sensors + empty_remaining)
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        import re as _re
+        safe_athlete = _re.sub(r'[^\w]', '', athlete_short).strip() if athlete_short else ""
+        trim_tag = "_raceonly" if trimmed else ("_zoom" if (t_start is not None or t_end is not None) else "")
+        if race_label:
+            safe_label = _re.sub(r'[^\w\s-]', '', race_label).strip().replace(' ', '_')
+            parts = [safe_athlete, safe_label, sport_norm] if safe_athlete else [safe_label, sport_norm]
+            filename = "_".join(parts) + trim_tag + ".xlsx"
+        else:
+            parts = [safe_athlete, "timeseries", sport_norm, wid] if safe_athlete else ["timeseries", sport_norm, wid]
+            filename = "_".join(parts) + trim_tag + ".xlsx"
+
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 

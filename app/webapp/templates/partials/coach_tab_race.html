@@ -1,6 +1,51 @@
 <div class="card">
   <h4 style="margin-top:0;">Race Performance</h4>
 
+  <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+    <form
+      id="race-sync-form"
+      hx-post="/actions/sync_race_results"
+      hx-target="#race-sync-status"
+      hx-swap="innerHTML"
+      hx-include="#controls"
+      style="margin:0;"
+    >
+      <button class="btn secondary" type="submit">Sync WTO Race Results</button>
+    </form>
+    <div id="race-sync-status" class="muted">Loads race results into Supabase for this athlete (latest 2 years).</div>
+  </div>
+
+  <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:4px;">
+    <form
+      id="fit-upload-form"
+      hx-post="/actions/upload_fit"
+      hx-target="#fit-upload-status"
+      hx-swap="innerHTML"
+      hx-encoding="multipart/form-data"
+      hx-include="#controls"
+      style="margin:0; display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;"
+    >
+      <div>
+        <div class="muted" style="margin-bottom:2px;">Upload FIT File (non-premium athletes)</div>
+        <input type="file" name="file" accept=".fit" required style="font-size:13px;">
+      </div>
+      <div>
+        <div class="muted" style="margin-bottom:2px;">Sport</div>
+        <select name="sport">
+          <option value="run">Run</option>
+          <option value="bike">Bike</option>
+          <option value="swim">Swim</option>
+        </select>
+      </div>
+      <div>
+        <div class="muted" style="margin-bottom:2px;">Label (optional)</div>
+        <input type="text" name="label" placeholder="e.g. 2025 WTCS London run" style="width:200px;">
+      </div>
+      <button class="btn secondary" type="submit">Upload</button>
+    </form>
+  </div>
+  <div id="fit-upload-status"></div>
+
   <div
     id="race-performance"
     class="muted"

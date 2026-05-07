@@ -364,6 +364,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_races = sub.add_parser("sync-races", help="Sync WTO race results into Podium DB")
     p_races.add_argument("--athlete-id", type=int)
     p_races.add_argument("--only-named", action="store_true")
+    p_races.add_argument("--mapped-only", action="store_true", help="Sync ALL athletes that have a WTO mapping")
     p_races.set_defaults(func=cmd_sync_races)
 
     return p
