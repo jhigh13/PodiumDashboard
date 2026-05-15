@@ -3770,16 +3770,20 @@ def create_app() -> FastAPI:
                 try:
                     with conn.begin_nested():
                         bd_rows = conn.execute(text("""
-                            WITH latest_bd AS (
-                                SELECT MAX(retrieved_at) AS latest
+                            WITH latest_per_athlete AS (
+                                SELECT athlete_id, MAX(retrieved_at) AS latest
                                 FROM athlete_ranking_breakdown
-                                WHERE ranking_cat_id = :cat_id
+                                WHERE athlete_id = ANY(:ids)
+                                  AND ranking_cat_id = :cat_id
+                                GROUP BY athlete_id
                             )
-                            SELECT athlete_id, event_id, event_finish_date, points, period, included
+                            SELECT abd.athlete_id, abd.event_id, abd.event_finish_date,
+                                   abd.points, abd.period, abd.included
                             FROM athlete_ranking_breakdown abd
-                            JOIN latest_bd lb ON abd.retrieved_at = lb.latest
-                            WHERE athlete_id = ANY(:ids)
-                              AND abd.ranking_cat_id = :cat_id
+                            JOIN latest_per_athlete lpa
+                              ON abd.athlete_id = lpa.athlete_id
+                             AND abd.retrieved_at = lpa.latest
+                            WHERE abd.ranking_cat_id = :cat_id
                         """), {"ids": page_athlete_ids, "cat_id": cat_id}).mappings().all()
                 except Exception:
                     bd_rows = []
