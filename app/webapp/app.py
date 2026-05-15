@@ -3791,30 +3791,54 @@ def create_app() -> FastAPI:
                 athlete_events: dict[int, list[dict]] = {}
                 seen_events: set[tuple[int, int]] = set()
 
-                def _event_value_at(ev: dict, as_of: date) -> float:
+                def _bucket_and_value_at(ev: dict, as_of: date) -> tuple[int | None, float]:
                     pts = float(ev.get("points") or 0.0)
                     efd = ev.get("event_finish_date")
-                    period = ev.get("period", 1)
+                    period = int(ev.get("period", 1) or 1)
+
+                    if pts <= 0:
+                        return None, 0.0
+
                     if not efd:
-                        return pts / 3.0 if period == 2 else pts
+                        return (2, pts) if period == 2 else (1, pts)
 
                     one_year = efd + timedelta(days=365)
                     two_years = efd + timedelta(days=730)
                     if as_of >= two_years:
-                        return 0.0
-                    if as_of >= one_year:
-                        return pts / 3.0
-                    return pts
+                        return None, 0.0
 
-                def _score_at(events: list[dict], as_of: date, event_cap: int) -> float:
-                    values = [_event_value_at(ev, as_of) for ev in events]
-                    positive_values = [v for v in values if v > 0]
-                    if not positive_values:
+                    if as_of < one_year:
+                        return 1, pts
+
+                    # In period 2 (12-24 months), events currently in period 1 lose 2/3 value.
+                    # Events already in period 2 are assumed to already be period-adjusted in DB.
+                    if period == 1:
+                        return 2, (pts / 3.0)
+                    return 2, pts
+
+                def _score_at(events: list[dict], as_of: date, cap_curr: int, cap_prev: int) -> float:
+                    curr_values: list[float] = []
+                    prev_values: list[float] = []
+
+                    for ev in events:
+                        bucket, val = _bucket_and_value_at(ev, as_of)
+                        if bucket is None or val <= 0:
+                            continue
+                        if bucket == 1:
+                            curr_values.append(val)
+                        else:
+                            prev_values.append(val)
+
+                    if not curr_values and not prev_values:
                         return 0.0
-                    positive_values.sort(reverse=True)
-                    if event_cap <= 0:
-                        return sum(positive_values)
-                    return sum(positive_values[:event_cap])
+
+                    curr_values.sort(reverse=True)
+                    prev_values.sort(reverse=True)
+
+                    curr_cap = cap_curr if cap_curr > 0 else len(curr_values)
+                    prev_cap = cap_prev if cap_prev > 0 else len(prev_values)
+
+                    return sum(curr_values[:curr_cap]) + sum(prev_values[:prev_cap])
 
                 for bd in bd_rows:
                     aid = bd["athlete_id"]
@@ -3847,13 +3871,15 @@ def create_app() -> FastAPI:
                 # 1) events crossing 12 months drop to one-third points
                 # 2) expiring events can be replaced by currently excluded events
                 for aid, events in athlete_events.items():
-                    included_count = sum(1 for ev in events if ev.get("included", True))
-                    event_cap = included_count if included_count > 0 else len(events)
-                    current_score = _score_at(events, today, event_cap)
+                    caps = event_counts.get(aid, {})
+                    cap_curr = int(caps.get("curr", 0) or 0)
+                    cap_prev = int(caps.get("prev", 0) or 0)
 
-                    risk_2w = max(0.0, current_score - _score_at(events, cutoff_2w, event_cap))
-                    risk_1m = max(0.0, current_score - _score_at(events, cutoff_1m, event_cap))
-                    risk_3m = max(0.0, current_score - _score_at(events, cutoff_3m, event_cap))
+                    current_score = _score_at(events, today, cap_curr, cap_prev)
+
+                    risk_2w = max(0.0, current_score - _score_at(events, cutoff_2w, cap_curr, cap_prev))
+                    risk_1m = max(0.0, current_score - _score_at(events, cutoff_1m, cap_curr, cap_prev))
+                    risk_3m = max(0.0, current_score - _score_at(events, cutoff_3m, cap_curr, cap_prev))
 
                     at_risk[aid] = {"r2w": risk_2w, "r1m": risk_1m, "r3m": risk_3m}
 
