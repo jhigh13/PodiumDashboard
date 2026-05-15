@@ -3770,10 +3770,16 @@ def create_app() -> FastAPI:
                 try:
                     with conn.begin_nested():
                         bd_rows = conn.execute(text("""
-                            SELECT athlete_id, event_finish_date, points, period, included
-                            FROM athlete_ranking_breakdown
+                            WITH latest_bd AS (
+                                SELECT MAX(retrieved_at) AS latest
+                                FROM athlete_ranking_breakdown
+                                WHERE ranking_cat_id = :cat_id
+                            )
+                            SELECT athlete_id, event_id, event_finish_date, points, period, included
+                            FROM athlete_ranking_breakdown abd
+                            JOIN latest_bd lb ON abd.retrieved_at = lb.latest
                             WHERE athlete_id = ANY(:ids)
-                              AND ranking_cat_id = :cat_id
+                              AND abd.ranking_cat_id = :cat_id
                         """), {"ids": page_athlete_ids, "cat_id": cat_id}).mappings().all()
                 except Exception:
                     bd_rows = []
@@ -3782,9 +3788,42 @@ def create_app() -> FastAPI:
                 cutoff_2w = today + timedelta(days=14)
                 cutoff_1m = today + timedelta(days=30)
                 cutoff_3m = today + timedelta(days=91)
+                athlete_events: dict[int, list[dict]] = {}
+                seen_events: set[tuple[int, int]] = set()
+
+                def _event_value_at(ev: dict, as_of: date) -> float:
+                    pts = float(ev.get("points") or 0.0)
+                    efd = ev.get("event_finish_date")
+                    period = ev.get("period", 1)
+                    if not efd:
+                        return pts / 3.0 if period == 2 else pts
+
+                    one_year = efd + timedelta(days=365)
+                    two_years = efd + timedelta(days=730)
+                    if as_of >= two_years:
+                        return 0.0
+                    if as_of >= one_year:
+                        return pts / 3.0
+                    return pts
+
+                def _score_at(events: list[dict], as_of: date, event_cap: int) -> float:
+                    values = [_event_value_at(ev, as_of) for ev in events]
+                    positive_values = [v for v in values if v > 0]
+                    if not positive_values:
+                        return 0.0
+                    positive_values.sort(reverse=True)
+                    if event_cap <= 0:
+                        return sum(positive_values)
+                    return sum(positive_values[:event_cap])
 
                 for bd in bd_rows:
                     aid = bd["athlete_id"]
+                    event_id = bd.get("event_id")
+                    if event_id is not None:
+                        dedupe_key = (aid, int(event_id))
+                        if dedupe_key in seen_events:
+                            continue
+                        seen_events.add(dedupe_key)
                     is_included = bd.get("included", True)
                     period = bd.get("period", 1)
 
@@ -3797,21 +3836,26 @@ def create_app() -> FastAPI:
                         else:
                             event_counts[aid]["prev"] += 1
 
-                    # At-risk: only period 2 included events
-                    if period == 2 and is_included:
-                        if aid not in at_risk:
-                            at_risk[aid] = {"r2w": 0, "r1m": 0, "r3m": 0}
-                        efd = bd["event_finish_date"]
-                        pts = float(bd["points"] or 0)
-                        if not efd:
-                            continue
-                        expiry = efd + timedelta(days=730)
-                        if today <= expiry <= cutoff_2w:
-                            at_risk[aid]["r2w"] += pts
-                        if today <= expiry <= cutoff_1m:
-                            at_risk[aid]["r1m"] += pts
-                        if today <= expiry <= cutoff_3m:
-                            at_risk[aid]["r3m"] += pts
+                    athlete_events.setdefault(aid, []).append({
+                        "event_finish_date": bd.get("event_finish_date"),
+                        "points": float(bd.get("points") or 0.0),
+                        "period": period,
+                        "included": is_included,
+                    })
+
+                # At-risk simulation:
+                # 1) events crossing 12 months drop to one-third points
+                # 2) expiring events can be replaced by currently excluded events
+                for aid, events in athlete_events.items():
+                    included_count = sum(1 for ev in events if ev.get("included", True))
+                    event_cap = included_count if included_count > 0 else len(events)
+                    current_score = _score_at(events, today, event_cap)
+
+                    risk_2w = max(0.0, current_score - _score_at(events, cutoff_2w, event_cap))
+                    risk_1m = max(0.0, current_score - _score_at(events, cutoff_1m, event_cap))
+                    risk_3m = max(0.0, current_score - _score_at(events, cutoff_3m, event_cap))
+
+                    at_risk[aid] = {"r2w": risk_2w, "r1m": risk_1m, "r3m": risk_3m}
 
                 # Backfill curr/prev event counts into rows where NULL
                 for r in rows:
@@ -3922,9 +3966,15 @@ def create_app() -> FastAPI:
         for r in rows:
             entry = dict(r)
             if r["event_finish_date"]:
+                entry["drop_off"] = r["event_finish_date"] + timedelta(days=365)
+                entry["days_to_drop_off"] = (entry["drop_off"] - today).days
+                entry["drop_off_loss"] = float(r.get("points") or 0.0) * (2.0 / 3.0)
                 entry["expiry"] = r["event_finish_date"] + timedelta(days=730)
                 entry["days_to_expiry"] = (entry["expiry"] - today).days
             else:
+                entry["drop_off"] = None
+                entry["days_to_drop_off"] = None
+                entry["drop_off_loss"] = None
                 entry["expiry"] = None
                 entry["days_to_expiry"] = None
             if r["period"] == 1:

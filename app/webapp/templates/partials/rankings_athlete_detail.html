@@ -65,6 +65,7 @@
         <th style="text-align:center">Date</th>
         <th style="text-align:center">Position</th>
         <th style="text-align:right">Points</th>
+        <th style="text-align:center">Drop-off</th>
         <th style="text-align:center">Status</th>
       </tr>
     </thead>
@@ -76,6 +77,20 @@
         </td>
         <td style="text-align:center">{{ e.position or "—" }}</td>
         <td style="text-align:right">{{ "{:,.1f}".format(e.points) if e.points else "—" }}</td>
+        <td style="text-align:center">
+          {% if e.drop_off %}
+          {% if e.days_to_drop_off <= 14 %}
+          <span class="badge red">{{ e.days_to_drop_off }}d</span>
+          {% elif e.days_to_drop_off <= 91 %}
+          <span class="badge yellow">{{ e.days_to_drop_off }}d</span>
+          {% else %}
+          <span class="badge gray">{{ e.days_to_drop_off }}d</span>
+          {% endif %}
+          <span class="muted" style="font-size:12px; margin-left:6px;">-{{ "{:,.1f}".format(e.drop_off_loss) }}</span>
+          {% else %}
+          —
+          {% endif %}
+        </td>
         <td style="text-align:center">
           {% if e.included %}
           <span class="badge green">Counted</span>
