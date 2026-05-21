@@ -3913,13 +3913,18 @@ def create_app() -> FastAPI:
                         d[suffix] = 0
                 drops[aid] = d
 
-            # Weekly change: compare current rank to previous week's snapshot
+            # Weekly change: compare current rank to ~one week ago.
+            # Pick the most recent snapshot at least 6 days before the latest
+            # so stray midweek snapshots don't collapse "change" to ~0.
             changes: dict[int, int | None] = {}
             try:
                 prev_week = conn.execute(text("""
                     SELECT DISTINCT retrieved_at FROM athlete_rankings
                     WHERE ranking_cat_id = :cat_id
-                      AND retrieved_at < (SELECT MAX(retrieved_at) FROM athlete_rankings WHERE ranking_cat_id = :cat_id)
+                      AND retrieved_at <= (
+                          SELECT MAX(retrieved_at) FROM athlete_rankings
+                          WHERE ranking_cat_id = :cat_id
+                      ) - INTERVAL '6 days'
                     ORDER BY retrieved_at DESC LIMIT 1
                 """), {"cat_id": cat_id}).scalar()
             except Exception:
