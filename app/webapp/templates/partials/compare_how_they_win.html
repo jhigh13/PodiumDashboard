@@ -1,0 +1,35 @@
+{% set h = bundle.how_they_win %}
+{% set a = bundle.athlete_a %}
+{% set b = bundle.athlete_b %}
+<div class="card">
+  <h3 class="section-title">HOW THEY WIN</h3>
+  {% if h.total_swim() + h.total_bike() + h.total_run() == 0 %}
+    <p class="muted" style="text-align: center; padding: 20px;">No split data available.</p>
+  {% else %}
+    {% macro segment_row(label, wins_a, wins_b, color_class) %}
+      {% set total = wins_a + wins_b %}
+      {% set pct_a = (100 * wins_a / total) if total else 0 %}
+      {% set pct_b = (100 * wins_b / total) if total else 0 %}
+      {% set leader_pct = pct_a if pct_a >= pct_b else pct_b %}
+      {% set leader_label = a.full_name.split(' ')[0] if pct_a >= pct_b else b.full_name.split(' ')[0] %}
+      <div class="htw-row">
+        <div class="num left">{{ wins_a }}</div>
+        <div>
+          <div class="htw-bar">
+            <div class="fill-a" style="width: {{ pct_a }}%;"></div>
+            <div class="fill-b" style="width: {{ pct_b }}%;"></div>
+          </div>
+          <div class="htw-label">{{ label }} {% if total %} — {{ leader_label }} {{ "%.0f"|format(leader_pct) }}%{% endif %}</div>
+        </div>
+        <div class="num right">{{ wins_b }}</div>
+      </div>
+    {% endmacro %}
+    {{ segment_row('SWIM', h.swim_wins_a, h.swim_wins_b, 'swim') }}
+    {{ segment_row('BIKE', h.bike_wins_a, h.bike_wins_b, 'bike') }}
+    {{ segment_row('RUN',  h.run_wins_a,  h.run_wins_b,  'run') }}
+    <div style="display:flex; justify-content: space-between; margin-top: 14px; font-size: 12px;">
+      <div class="athlete-name-a">{{ a.full_name }}</div>
+      <div class="athlete-name-b">{{ b.full_name }}</div>
+    </div>
+  {% endif %}
+</div>

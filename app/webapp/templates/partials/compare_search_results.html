@@ -1,0 +1,12 @@
+{% if entries %}
+  {% for e in entries %}
+    <div class="search-item" data-slot="{{ slot }}" data-slug="{{ e.slug }}">
+      <div class="name">{{ e.full_name }}</div>
+      <div class="meta">{{ e.country or '—' }}{% if e.gender %} · {{ e.gender }}{% endif %} · #{{ e.athlete_id }}</div>
+    </div>
+  {% endfor %}
+{% elif q %}
+  <div class="search-item" style="cursor: default;">
+    <div class="meta">No matches for "{{ q }}"</div>
+  </div>
+{% endif %}

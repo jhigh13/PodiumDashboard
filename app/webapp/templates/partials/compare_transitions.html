@@ -1,0 +1,34 @@
+{% set t = bundle.transitions %}
+{% set a = bundle.athlete_a %}
+{% set b = bundle.athlete_b %}
+<div class="card">
+  <h3 class="section-title">TRANSITION HEAD TO HEAD</h3>
+  {% if t.t1_wins_a + t.t1_wins_b + t.t2_wins_a + t.t2_wins_b == 0 %}
+    <p class="muted" style="text-align: center; padding: 20px;">No transition data available.</p>
+  {% else %}
+    {% macro trow(label, wins_a, wins_b, avg_a, avg_b, gap) %}
+      {% set total = wins_a + wins_b %}
+      {% set pct_a = (100 * wins_a / total) if total else 0 %}
+      {% set pct_b = (100 * wins_b / total) if total else 0 %}
+      <div style="margin: 10px 0;">
+        <div class="htw-row">
+          <div class="num left">{{ wins_a }}</div>
+          <div>
+            <div class="htw-bar">
+              <div class="fill-a" style="width: {{ pct_a }}%;"></div>
+              <div class="fill-b" style="width: {{ pct_b }}%;"></div>
+            </div>
+            <div class="htw-label">{{ label }} — {{ format_segment_time(avg_a) }} vs {{ format_segment_time(avg_b) }}</div>
+          </div>
+          <div class="num right">{{ wins_b }}</div>
+        </div>
+      </div>
+    {% endmacro %}
+    {{ trow('T1', t.t1_wins_a, t.t1_wins_b, t.avg_t1_a_sec, t.avg_t1_b_sec, t.avg_t1_gap_sec) }}
+    {{ trow('T2', t.t2_wins_a, t.t2_wins_b, t.avg_t2_a_sec, t.avg_t2_b_sec, t.avg_t2_gap_sec) }}
+    <div style="display:flex; justify-content: space-between; margin-top: 14px; font-size: 12px;">
+      <div class="athlete-name-a">{{ a.full_name }}</div>
+      <div class="athlete-name-b">{{ b.full_name }}</div>
+    </div>
+  {% endif %}
+</div>

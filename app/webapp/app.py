@@ -55,6 +55,7 @@ from app.data.triathlon_db import get_triathlon_engine
 from app.utils.dates import get_effective_today
 from app.utils.settings import settings
 from app.scheduling.scheduler import start_scheduler, stop_scheduler
+from app.webapp.routes_compare import register_compare_routes
 
 
 templates = Jinja2Templates(directory="app/webapp/templates")
@@ -4186,6 +4187,8 @@ def create_app() -> FastAPI:
 </script>
 """
         return HTMLResponse(html)
+
+    register_compare_routes(app, templates)
 
     return app
 

@@ -1,0 +1,52 @@
+{% set r = bundle.record %}
+{% set a = bundle.athlete_a %}
+{% set b = bundle.athlete_b %}
+{% set total = (r.wins_a + r.wins_b) %}
+{% set pct_a = (100 * r.wins_a / total) if total else 50 %}
+{% set pct_b = (100 * r.wins_b / total) if total else 50 %}
+<div class="card">
+  <h3 class="section-title">HEAD TO HEAD</h3>
+  {% if r.matches == 0 %}
+    <p class="muted" style="text-align: center; padding: 20px;">No shared races on record between these athletes.</p>
+  {% else %}
+    <div class="h2h-hero">
+      <div class="athlete-col left">
+        <div class="score-num" style="color:#4f46e5;">{{ r.wins_a }}</div>
+        <div class="score-name athlete-name-a">{{ a.full_name }}</div>
+      </div>
+      <div>
+        <div class="ratio-bar" title="{{ r.wins_a }} – {{ r.wins_b }}">
+          <div class="seg-a" style="width: {{ pct_a }}%;"></div>
+          <div class="seg-b" style="width: {{ pct_b }}%;"></div>
+        </div>
+        <div class="muted" style="text-align: center; margin-top: 8px; font-size: 13px;">
+          <strong>{{ r.matches }}</strong> shared race{{ '' if r.matches == 1 else 's' }}
+        </div>
+        {% if r.last_met_event %}
+        <div class="muted" style="text-align: center; margin-top: 2px; font-size: 12px;">
+          Last met
+          {% set days = from_today_days(r.last_met_date) %}
+          {% if days is not none %}{{ humanize_elapsed_since(days) }} ago{% endif %}
+          {% if r.last_met_event %}at {{ r.last_met_event }}{% endif %}
+        </div>
+        {% endif %}
+        {% if r.avg_gap_sec_a_minus_b is not none %}
+        <div class="muted" style="text-align: center; margin-top: 4px; font-size: 12px;">
+          Avg gap (finished only):
+          {% if r.avg_gap_sec_a_minus_b < 0 %}
+            <strong style="color:#4f46e5;">{{ a.full_name.split(' ')[0] }}</strong> faster by {{ format_gap(r.avg_gap_sec_a_minus_b) }}
+          {% elif r.avg_gap_sec_a_minus_b > 0 %}
+            <strong style="color:#15803d;">{{ b.full_name.split(' ')[0] }}</strong> faster by {{ format_gap(r.avg_gap_sec_a_minus_b) }}
+          {% else %}
+            even
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+      <div class="athlete-col right">
+        <div class="score-num" style="color:#15803d;">{{ r.wins_b }}</div>
+        <div class="score-name athlete-name-b">{{ b.full_name }}</div>
+      </div>
+    </div>
+  {% endif %}
+</div>

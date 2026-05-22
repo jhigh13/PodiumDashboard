@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="margin-bottom: 12px;">
+  <h2 style="margin: 0 0 4px; color: #c8102e;">Athlete Compare</h2>
+  <p class="muted" style="margin: 0; font-size: 13px;">
+    Head-to-head record, segment dominance, pack tactics and transition battles for any two World Triathlon athletes.
+  </p>
+</div>
+
+{% if no_db %}
+<div class="card">
+  <p class="muted">Triathlon database not configured.</p>
+</div>
+{% endif %}
+
+<!-- Picker -->
+<form method="get" action="/compare" class="card" style="padding: 14px 16px;" id="compare-form">
+  <div class="row" style="align-items: flex-end; gap: 12px;">
+    <div class="col" style="position: relative; flex: 1 1 280px;">
+      <label style="font-size: 12px; font-weight: 650; color: var(--muted); display:block; margin-bottom: 4px;">Athlete A</label>
+      <input
+        type="text" name="a" id="a-input"
+        value="{{ athlete_a.slug if athlete_a else a_param }}"
+        placeholder="Start typing a name..."
+        autocomplete="off"
+        hx-get="/partials/compare/search"
+        hx-target="#a-results" hx-swap="innerHTML"
+        hx-trigger="keyup changed delay:200ms, focus"
+        hx-vals='{"slot":"a"}'
+        onfocus="document.getElementById('a-results').classList.add('open')"
+        onblur="setTimeout(() => document.getElementById('a-results').classList.remove('open'), 180)"
+        style="width: 100%;">
+      <div id="a-results" class="search-results"></div>
+      {% if athlete_a %}<div class="muted" style="font-size: 12px; margin-top: 4px;">{{ athlete_a.full_name }} ({{ athlete_a.country or '—' }})</div>{% endif %}
+    </div>
+
+    <button type="button" class="btn secondary" style="height: 40px; padding: 0 14px;"
+            title="Swap athletes" onclick="swapAthletes()">&#x21C4;</button>
+
+    <div class="col" style="position: relative; flex: 1 1 280px;">
+      <label style="font-size: 12px; font-weight: 650; color: var(--muted); display:block; margin-bottom: 4px;">Athlete B</label>
+      <input
+        type="text" name="b" id="b-input"
+        value="{{ athlete_b.slug if athlete_b else b_param }}"
+        placeholder="Start typing a name..."
+        autocomplete="off"
+        hx-get="/partials/compare/search"
+        hx-target="#b-results" hx-swap="innerHTML"
+        hx-trigger="keyup changed delay:200ms, focus"
+        hx-vals='{"slot":"b"}'
+        onfocus="document.getElementById('b-results').classList.add('open')"
+        onblur="setTimeout(() => document.getElementById('b-results').classList.remove('open'), 180)"
+        style="width: 100%;">
+      <div id="b-results" class="search-results"></div>
+      {% if athlete_b %}<div class="muted" style="font-size: 12px; margin-top: 4px;">{{ athlete_b.full_name }} ({{ athlete_b.country or '—' }})</div>{% endif %}
+    </div>
+
+    <button type="submit" class="btn" style="height: 40px; padding: 0 20px;">Compare</button>
+  </div>
+</form>
+
+{% if athlete_a and athlete_b %}
+  {% set a_id = athlete_a.athlete_id %}
+  {% set b_id = athlete_b.athlete_id %}
+  <div class="row" style="margin-top: 4px;">
+    <div class="col" style="flex: 1 1 100%;"
+         hx-get="/partials/compare/h2h?a={{ a_id }}&b={{ b_id }}" hx-trigger="load">
+      <div class="card"><p class="muted">Loading head-to-head...</p></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col"
+         hx-get="/partials/compare/how_they_win?a={{ a_id }}&b={{ b_id }}" hx-trigger="load">
+      <div class="card"><p class="muted">Loading how they win...</p></div>
+    </div>
+    <div class="col"
+         hx-get="/partials/compare/transitions?a={{ a_id }}&b={{ b_id }}" hx-trigger="load">
+      <div class="card"><p class="muted">Loading transitions...</p></div>
+    </div>
+  </div>
+
+  <div hx-get="/partials/compare/avg_splits?a={{ a_id }}&b={{ b_id }}" hx-trigger="load">
+    <div class="card"><p class="muted">Loading average splits...</p></div>
+  </div>
+
+  <div hx-get="/partials/compare/pack_profile?a={{ a_id }}&b={{ b_id }}" hx-trigger="load">
+    <div class="card"><p class="muted">Loading pack profile...</p></div>
+  </div>
+
+  <div hx-get="/partials/compare/race_log?a={{ a_id }}&b={{ b_id }}" hx-trigger="load">
+    <div class="card"><p class="muted">Loading race log...</p></div>
+  </div>
+{% elif a_param or b_param %}
+  <div class="card">
+    <p class="muted">Could not resolve one or both athletes. Try typing a name and selecting from the dropdown.</p>
+  </div>
+{% else %}
+  <div class="card">
+    <h3 style="margin: 0 0 6px;">Pick two athletes to compare</h3>
+    <p class="muted" style="margin: 0 0 12px;">
+      Examples:
+      <a href="/compare?a=hayden-wilde&b=alex-yee">Hayden Wilde vs Alex Yee</a> ·
+      <a href="/compare?a=cassandre-beaugrand&b=beth-potter">Cassandre Beaugrand vs Beth Potter</a> ·
+      <a href="/compare?a=morgan-pearson&b=matthew-mcelroy">Morgan Pearson vs Matthew McElroy</a>
+    </p>
+    <p class="muted" style="font-size: 13px; margin: 0;">Shareable URL format: <code>/compare?a=&lt;slug&gt;&amp;b=&lt;slug&gt;</code></p>
+  </div>
+{% endif %}
+
+<style>
+  .search-results {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--card);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    margin-top: 4px;
+    max-height: 320px;
+    overflow-y: auto;
+    z-index: 10;
+    display: none;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.08);
+  }
+  .search-results.open:not(:empty) { display: block; }
+  .search-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+  }
+  .search-item:hover { background: #f1f5f9; }
+  .search-item:last-child { border-bottom: 0; }
+  .search-item .name { font-weight: 650; }
+  .search-item .meta { color: var(--muted); font-size: 12px; }
+
+  /* Compare card styling */
+  .h2h-hero {
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) minmax(260px, 2fr) minmax(120px, 1fr);
+    align-items: center;
+    gap: 20px;
+    padding: 8px 0;
+  }
+  .h2h-hero .score-num { font-size: 56px; font-weight: 900; line-height: 1; }
+  .h2h-hero .score-name { color: var(--muted); margin-top: 6px; font-weight: 650; }
+  .h2h-hero .athlete-col { text-align: center; }
+  .h2h-hero .athlete-col.left { text-align: left; }
+  .h2h-hero .athlete-col.right { text-align: right; }
+  .h2h-hero .athlete-col.left .score-name { text-align: left; }
+  .h2h-hero .athlete-col.right .score-name { text-align: right; }
+
+  .ratio-bar { width: 100%; height: 14px; border-radius: 999px; overflow: hidden; background: #cbd5e1; display: flex; }
+  .ratio-bar .seg-a { background: #6366f1; height: 100%; }
+  .ratio-bar .seg-b { background: #16a34a; height: 100%; }
+
+  .htw-row { display: grid; grid-template-columns: 36px 1fr 36px; gap: 12px; align-items: center; margin: 8px 0; }
+  .htw-row .num { font-weight: 800; font-size: 18px; }
+  .htw-row .num.left  { text-align: right; color: #6366f1; }
+  .htw-row .num.right { text-align: left;  color: #16a34a; }
+  .htw-bar { position: relative; height: 14px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
+  .htw-bar .fill-a { position: absolute; left: 0; top: 0; bottom: 0; background: #6366f1; }
+  .htw-bar .fill-b { position: absolute; right: 0; top: 0; bottom: 0; background: #16a34a; }
+  .htw-label { text-align: center; font-size: 11px; font-weight: 700; color: var(--muted); margin-top: 2px; }
+
+  .athlete-name-a { color: #4f46e5; font-weight: 700; }
+  .athlete-name-b { color: #15803d; font-weight: 700; }
+
+  .splits-table th, .splits-table td { text-align: center; }
+  .splits-table .seg { font-weight: 700; color: var(--muted); letter-spacing: 0.05em; font-size: 11px; }
+  .splits-table .faster { font-weight: 800; color: var(--text); }
+  .splits-table .race-count { color: var(--muted); font-size: 12px; }
+  .splits-table th.dist { text-align: center; font-size: 13px; }
+  .splits-table .left  { text-align: right; padding-right: 16px; }
+  .splits-table .right { text-align: left;  padding-left: 16px; }
+
+  .pack-stat { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding: 6px 0; }
+  .pack-stat .label { text-align: center; color: var(--muted); font-size: 12px; font-weight: 700; }
+  .pack-stat .v-left { text-align: right; font-size: 22px; font-weight: 800; color: #4f46e5; }
+  .pack-stat .v-right { text-align: left; font-size: 22px; font-weight: 800; color: #15803d; }
+
+  details.race-log > summary { cursor: pointer; font-weight: 700; padding: 4px 0; list-style: none; }
+  details.race-log > summary::before { content: "▶  "; font-size: 11px; }
+  details.race-log[open] > summary::before { content: "▼  "; }
+
+  .winner-a { background: rgba(99,102,241,0.10); }
+  .winner-b { background: rgba(22,163,74,0.10); }
+
+  .section-title { color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-align: center; margin: 0 0 12px; }
+</style>
+
+<script>
+  function swapAthletes() {
+    const a = document.getElementById('a-input');
+    const b = document.getElementById('b-input');
+    const tmp = a.value; a.value = b.value; b.value = tmp;
+  }
+
+  // Click handler is delegated so the dynamic search-results items work.
+  document.addEventListener('mousedown', function(e) {
+    const item = e.target.closest('.search-item');
+    if (!item) return;
+    const slot = item.dataset.slot;
+    const slug = item.dataset.slug;
+    const inputId = slot === 'a' ? 'a-input' : 'b-input';
+    const resultsId = slot === 'a' ? 'a-results' : 'b-results';
+    const inp = document.getElementById(inputId);
+    if (inp) inp.value = slug;
+    const res = document.getElementById(resultsId);
+    if (res) { res.innerHTML = ''; res.classList.remove('open'); }
+  });
+</script>
+{% endblock %}

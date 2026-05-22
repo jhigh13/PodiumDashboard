@@ -1,0 +1,48 @@
+{% set a = bundle.athlete_a %}
+{% set b = bundle.athlete_b %}
+{% set rows = bundle.split_averages %}
+<div class="card">
+  <h3 class="section-title">AVERAGE SPLIT COMPARISON</h3>
+  <p class="muted" style="text-align: center; margin: -8px 0 12px; font-size: 12px;">
+    Last 4 years &mdash; outliers removed (IQR method)
+  </p>
+  {% if not rows %}
+    <p class="muted" style="text-align: center; padding: 16px;">No split data available.</p>
+  {% else %}
+    {% for s in rows %}
+      {% if s.n_races_a + s.n_races_b > 0 %}
+      <div style="margin-bottom: 18px;">
+        <table class="splits-table">
+          <thead>
+            <tr>
+              <th class="left" style="width: 30%;"><span class="athlete-name-a">{{ a.full_name }}</span></th>
+              <th class="dist">{{ distance_label(s.distance) }}</th>
+              <th class="right" style="width: 30%;"><span class="athlete-name-b">{{ b.full_name }}</span></th>
+            </tr>
+            <tr>
+              <td class="left race-count">{{ s.n_races_a }} race{{ '' if s.n_races_a == 1 else 's' }}</td>
+              <td></td>
+              <td class="right race-count">{{ s.n_races_b }} race{{ '' if s.n_races_b == 1 else 's' }}</td>
+            </tr>
+          </thead>
+          <tbody>
+            {% macro split_row(label, a_sec, b_sec) %}
+              {% set faster_a = (a_sec is not none and b_sec is not none and a_sec < b_sec) %}
+              {% set faster_b = (a_sec is not none and b_sec is not none and b_sec < a_sec) %}
+              <tr>
+                <td class="left {% if faster_a %}faster{% endif %}">{{ format_segment_time(a_sec) }}</td>
+                <td class="seg">{{ label }}</td>
+                <td class="right {% if faster_b %}faster{% endif %}">{{ format_segment_time(b_sec) }}</td>
+              </tr>
+            {% endmacro %}
+            {{ split_row('SWIM',    s.swim_a_sec, s.swim_b_sec) }}
+            {{ split_row('BIKE',    s.bike_a_sec, s.bike_b_sec) }}
+            {{ split_row('RUN',     s.run_a_sec,  s.run_b_sec) }}
+            {{ split_row('OVERALL', s.overall_a_sec, s.overall_b_sec) }}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    {% endfor %}
+  {% endif %}
+</div>

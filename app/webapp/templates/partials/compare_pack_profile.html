@@ -1,0 +1,68 @@
+{% set a = bundle.athlete_a %}
+{% set b = bundle.athlete_b %}
+{% set pa = bundle.pack_profile[0] %}
+{% set pb = bundle.pack_profile[1] %}
+<div class="card">
+  <h3 class="section-title">PACK PROFILE — WTCS / WORLD CUP</h3>
+  {% if pa.races_with_pack_data == 0 and pb.races_with_pack_data == 0 %}
+    <p class="muted" style="text-align: center; padding: 20px;">No pack data available (athletes outside WTCS/World Cup coverage).</p>
+  {% else %}
+    <div style="display:flex; justify-content: space-between; margin-bottom: 10px; font-size: 12px;">
+      <div class="athlete-name-a">{{ a.full_name }} <span class="muted" style="font-weight:500;">({{ pa.races_with_pack_data }} races)</span></div>
+      <div class="athlete-name-b">{{ b.full_name }} <span class="muted" style="font-weight:500;">({{ pb.races_with_pack_data }} races)</span></div>
+    </div>
+
+    <div class="pack-stat">
+      <div class="v-left">
+        {% if pa.front_after_swim_pct is not none %}{{ "%.0f"|format(pa.front_after_swim_pct * 100) }}%{% else %}—{% endif %}
+      </div>
+      <div class="label">FRONT GROUP<br>AFTER SWIM<br><span style="font-weight:500; opacity:0.7;">(within 30s)</span></div>
+      <div class="v-right">
+        {% if pb.front_after_swim_pct is not none %}{{ "%.0f"|format(pb.front_after_swim_pct * 100) }}%{% else %}—{% endif %}
+      </div>
+    </div>
+
+    <div class="pack-stat">
+      <div class="v-left">
+        {% if pa.front_after_bike_pct is not none %}{{ "%.0f"|format(pa.front_after_bike_pct * 100) }}%{% else %}—{% endif %}
+      </div>
+      <div class="label">FRONT GROUP<br>AFTER BIKE<br><span style="font-weight:500; opacity:0.7;">(within 15s)</span></div>
+      <div class="v-right">
+        {% if pb.front_after_bike_pct is not none %}{{ "%.0f"|format(pb.front_after_bike_pct * 100) }}%{% else %}—{% endif %}
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="pack-stat">
+      <div class="v-left" style="font-size:16px;">{{ format_segment_time(pa.avg_swim_gap_to_leader_sec) }}</div>
+      <div class="label">AVG GAP TO LEADER<br>AFTER SWIM</div>
+      <div class="v-right" style="font-size:16px;">{{ format_segment_time(pb.avg_swim_gap_to_leader_sec) }}</div>
+    </div>
+
+    <div class="pack-stat">
+      <div class="v-left" style="font-size:16px;">{{ format_segment_time(pa.avg_bike_gap_to_leader_sec) }}</div>
+      <div class="label">AVG GAP TO LEADER<br>AFTER BIKE</div>
+      <div class="v-right" style="font-size:16px;">{{ format_segment_time(pb.avg_bike_gap_to_leader_sec) }}</div>
+    </div>
+
+    {% if pa.lead_pack_after_swim_pct or pb.lead_pack_after_swim_pct or pa.lead_pack_after_bike_pct or pb.lead_pack_after_bike_pct %}
+    <div class="divider"></div>
+    <div class="pack-stat">
+      <div class="v-left" style="font-size:14px;">
+        {% if pa.lead_pack_after_swim_pct is not none %}{{ "%.0f"|format(pa.lead_pack_after_swim_pct * 100) }}%{% else %}—{% endif %}
+        / {% if pa.lead_pack_after_bike_pct is not none %}{{ "%.0f"|format(pa.lead_pack_after_bike_pct * 100) }}%{% else %}—{% endif %}
+      </div>
+      <div class="label">IN BREAKAWAY LEAD PACK<br>(swim / bike)</div>
+      <div class="v-right" style="font-size:14px;">
+        {% if pb.lead_pack_after_swim_pct is not none %}{{ "%.0f"|format(pb.lead_pack_after_swim_pct * 100) }}%{% else %}—{% endif %}
+        / {% if pb.lead_pack_after_bike_pct is not none %}{{ "%.0f"|format(pb.lead_pack_after_bike_pct * 100) }}%{% else %}—{% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    <p class="muted" style="font-size: 11px; text-align: center; margin-top: 12px;">
+      Front group = within 30s on swim, 15s on bike. Reveals racing style: swimmers stay with the front pack; runners ride forward to make it.
+    </p>
+  {% endif %}
+</div>

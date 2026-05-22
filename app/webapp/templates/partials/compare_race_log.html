@@ -1,0 +1,44 @@
+{% set a = bundle.athlete_a %}
+{% set b = bundle.athlete_b %}
+{% set rows = bundle.race_log %}
+<div class="card">
+  <details class="race-log" {% if rows|length <= 8 %}open{% endif %}>
+    <summary>
+      Race-by-race ({{ rows|length }})
+    </summary>
+    {% if not rows %}
+      <p class="muted" style="padding: 12px 0;">No shared races.</p>
+    {% else %}
+    <table style="margin-top: 8px;">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Event</th>
+          <th>Distance</th>
+          <th style="text-align: center;"><span class="athlete-name-a">{{ a.full_name.split(' ')[0] }}</span></th>
+          <th style="text-align: center;"><span class="athlete-name-b">{{ b.full_name.split(' ')[0] }}</span></th>
+          <th style="text-align: right;">Gap</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr class="{% if r.winner == 'a' %}winner-a{% elif r.winner == 'b' %}winner-b{% endif %}">
+          <td style="white-space: nowrap;">{{ r.event_date or '—' }}</td>
+          <td>{{ r.event_name }}{% if r.event_venue %} <span class="muted">— {{ r.event_venue }}</span>{% endif %}</td>
+          <td>{{ distance_label(r.distance) or r.prog_name or '' }}</td>
+          <td style="text-align: center;">
+            {% if r.pos_a %}{{ r.pos_a }}{% elif r.finish_status_a and r.finish_status_a not in ['FINISH','FINISHED','OK','OFFICIAL'] %}<span class="badge gray">{{ r.finish_status_a }}</span>{% else %}—{% endif %}
+          </td>
+          <td style="text-align: center;">
+            {% if r.pos_b %}{{ r.pos_b }}{% elif r.finish_status_b and r.finish_status_b not in ['FINISH','FINISHED','OK','OFFICIAL'] %}<span class="badge gray">{{ r.finish_status_b }}</span>{% else %}—{% endif %}
+          </td>
+          <td style="text-align: right; font-variant-numeric: tabular-nums;">
+            {% if r.gap_sec is not none %}{{ format_gap(r.gap_sec, signed=True) }}{% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </details>
+</div>
