@@ -79,12 +79,21 @@ def register_compare_routes(app: FastAPI, templates: Jinja2Templates) -> None:
         )
 
     @app.get("/partials/compare/search", response_class=HTMLResponse)
-    def compare_search(request: Request, q: str = "", slot: str = "a"):
+    def compare_search(
+        request: Request,
+        q: str = "",
+        a: str = "",
+        b: str = "",
+        slot: str = "a",
+    ):
+        # The picker inputs have name="a" / name="b", so HTMX sends the value
+        # under those param names rather than as "q". Accept any of them.
+        query = (q or a or b or "").strip()
         idx = get_athlete_index()
-        entries = idx.search(q, limit=10) if q.strip() else []
+        entries = idx.search(query, limit=10) if query else []
         return templates.TemplateResponse(
             "partials/compare_search_results.html",
-            {"request": request, "entries": entries, "slot": slot, "q": q},
+            {"request": request, "entries": entries, "slot": slot, "q": query},
         )
 
     @app.get("/partials/compare/h2h", response_class=HTMLResponse)

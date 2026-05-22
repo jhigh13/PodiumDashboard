@@ -21,7 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from app.services.athlete_index import AthleteEntry, get_athlete_index
-from app.utils.timefmt import distance_sort_key, time_to_seconds
+from app.utils.timefmt import distance_sort_key, slugify_athlete_name, time_to_seconds
 
 
 # ---------------------------------------------------------------------------
@@ -167,19 +167,34 @@ class CompareBundle:
 
 
 def resolve_athlete(token: str | int | None) -> AthleteRef | None:
-    """Resolve a slug or numeric ID to an AthleteRef via the index."""
+    """Resolve a slug, raw name, or numeric ID to an AthleteRef via the index.
+
+    Accepts a slug ("hayden-wilde"), a numeric ID, or a raw display name
+    ("Hayden Wilde") — raw names are slugified before lookup. This means
+    the form submit works whether the user picked from the dropdown
+    (slug already populated) or just typed a name and hit Compare.
+    """
     if token is None or token == "":
         return None
     idx = get_athlete_index()
     if isinstance(token, int):
         entry = idx.by_id(token)
-    else:
-        s = str(token).strip()
-        if s.isdigit():
-            entry = idx.by_id(int(s))
-        else:
-            entry = idx.by_slug(s)
-    return AthleteRef.from_entry(entry) if entry else None
+        return AthleteRef.from_entry(entry) if entry else None
+    s = str(token).strip()
+    if not s:
+        return None
+    if s.isdigit():
+        entry = idx.by_id(int(s))
+        return AthleteRef.from_entry(entry) if entry else None
+    entry = idx.by_slug(s)
+    if entry:
+        return AthleteRef.from_entry(entry)
+    slug = slugify_athlete_name(s)
+    if slug and slug != s:
+        entry = idx.by_slug(slug)
+        if entry:
+            return AthleteRef.from_entry(entry)
+    return None
 
 
 # ---------------------------------------------------------------------------

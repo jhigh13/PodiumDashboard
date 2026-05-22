@@ -35,7 +35,7 @@
       {% if athlete_a %}<div class="muted" style="font-size: 12px; margin-top: 4px;">{{ athlete_a.full_name }} ({{ athlete_a.country or '—' }})</div>{% endif %}
     </div>
 
-    <button type="button" class="btn secondary" style="height: 40px; padding: 0 14px;"
+    <button type="button" class="btn secondary" style="height: 40px; padding: 0 14px; align-self: flex-end;"
             title="Swap athletes" onclick="swapAthletes()">&#x21C4;</button>
 
     <div class="col" style="position: relative; flex: 1 1 280px;">
@@ -55,8 +55,10 @@
       <div id="b-results" class="search-results"></div>
       {% if athlete_b %}<div class="muted" style="font-size: 12px; margin-top: 4px;">{{ athlete_b.full_name }} ({{ athlete_b.country or '—' }})</div>{% endif %}
     </div>
+  </div>
 
-    <button type="submit" class="btn" style="height: 40px; padding: 0 20px;">Compare</button>
+  <div style="display: flex; justify-content: center; margin-top: 14px;">
+    <button type="submit" class="btn" style="padding: 10px 36px; font-weight: 650;">Compare</button>
   </div>
 </form>
 
