@@ -16,44 +16,45 @@
 
 <!-- Picker -->
 <form method="get" action="/compare" class="card" style="padding: 14px 16px;" id="compare-form">
-  <div class="row" style="align-items: flex-end; gap: 12px;">
+  <div class="row" style="align-items: flex-end; gap: 16px;">
     <div class="col" style="position: relative; flex: 1 1 280px;">
       <label style="font-size: 12px; font-weight: 650; color: var(--muted); display:block; margin-bottom: 4px;">Athlete A</label>
       <input
-        type="text" name="a" id="a-input"
-        value="{{ athlete_a.slug if athlete_a else a_param }}"
+        type="text" id="a-input"
+        value="{{ athlete_a.full_name if athlete_a else a_param }}"
         placeholder="Start typing a name..."
         autocomplete="off"
         hx-get="/partials/compare/search"
         hx-target="#a-results" hx-swap="innerHTML"
         hx-trigger="keyup changed delay:200ms, focus"
-        hx-vals='{"slot":"a"}'
+        hx-vals='js:{q: document.getElementById("a-input").value, slot: "a"}'
+        hx-params="none"
         onfocus="document.getElementById('a-results').classList.add('open')"
         onblur="setTimeout(() => document.getElementById('a-results').classList.remove('open'), 180)"
         style="width: 100%;">
+      <input type="hidden" name="a" id="a-slug" value="{{ athlete_a.slug if athlete_a else a_param }}">
       <div id="a-results" class="search-results"></div>
-      {% if athlete_a %}<div class="muted" style="font-size: 12px; margin-top: 4px;">{{ athlete_a.full_name }} ({{ athlete_a.country or '—' }})</div>{% endif %}
+      {% if athlete_a %}<div class="muted" style="font-size: 12px; margin-top: 4px;">{{ athlete_a.country or '' }}</div>{% endif %}
     </div>
-
-    <button type="button" class="btn secondary" style="height: 40px; padding: 0 14px; align-self: flex-end;"
-            title="Swap athletes" onclick="swapAthletes()">&#x21C4;</button>
 
     <div class="col" style="position: relative; flex: 1 1 280px;">
       <label style="font-size: 12px; font-weight: 650; color: var(--muted); display:block; margin-bottom: 4px;">Athlete B</label>
       <input
-        type="text" name="b" id="b-input"
-        value="{{ athlete_b.slug if athlete_b else b_param }}"
+        type="text" id="b-input"
+        value="{{ athlete_b.full_name if athlete_b else b_param }}"
         placeholder="Start typing a name..."
         autocomplete="off"
         hx-get="/partials/compare/search"
         hx-target="#b-results" hx-swap="innerHTML"
         hx-trigger="keyup changed delay:200ms, focus"
-        hx-vals='{"slot":"b"}'
+        hx-vals='js:{q: document.getElementById("b-input").value, slot: "b"}'
+        hx-params="none"
         onfocus="document.getElementById('b-results').classList.add('open')"
         onblur="setTimeout(() => document.getElementById('b-results').classList.remove('open'), 180)"
         style="width: 100%;">
+      <input type="hidden" name="b" id="b-slug" value="{{ athlete_b.slug if athlete_b else b_param }}">
       <div id="b-results" class="search-results"></div>
-      {% if athlete_b %}<div class="muted" style="font-size: 12px; margin-top: 4px;">{{ athlete_b.full_name }} ({{ athlete_b.country or '—' }})</div>{% endif %}
+      {% if athlete_b %}<div class="muted" style="font-size: 12px; margin-top: 4px;">{{ athlete_b.country or '' }}</div>{% endif %}
     </div>
   </div>
 
@@ -75,7 +76,7 @@
   <div class="row">
     <div class="col"
          hx-get="/partials/compare/how_they_win?a={{ a_id }}&b={{ b_id }}" hx-trigger="load">
-      <div class="card"><p class="muted">Loading how they win...</p></div>
+      <div class="card"><p class="muted">Loading swim/bike/run head to head...</p></div>
     </div>
     <div class="col"
          hx-get="/partials/compare/transitions?a={{ a_id }}&b={{ b_id }}" hx-trigger="load">
@@ -92,7 +93,7 @@
   </div>
 
   <div hx-get="/partials/compare/race_log?a={{ a_id }}&b={{ b_id }}" hx-trigger="load">
-    <div class="card"><p class="muted">Loading race log...</p></div>
+    <div class="card"><p class="muted">Loading race-by-race comparison...</p></div>
   </div>
 {% elif a_param or b_param %}
   <div class="card">
@@ -184,9 +185,21 @@
   .pack-stat .v-left { text-align: right; font-size: 22px; font-weight: 800; color: #4f46e5; }
   .pack-stat .v-right { text-align: left; font-size: 22px; font-weight: 800; color: #15803d; }
 
-  details.race-log > summary { cursor: pointer; font-weight: 700; padding: 4px 0; list-style: none; }
-  details.race-log > summary::before { content: "▶  "; font-size: 11px; }
-  details.race-log[open] > summary::before { content: "▼  "; }
+  .seg-section { margin-bottom: 18px; }
+  .seg-section-header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 8px;
+  }
+  .seg-section-header h4 { margin: 0; color: var(--link); font-size: 15px; }
+  .seg-section-header .h2h-mini { font-size: 13px; }
+  .seg-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .seg-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .seg-table .col-a { text-align: right; width: 25%; white-space: nowrap; }
+  .seg-table .col-race { text-align: center; }
+  .seg-table .col-b { text-align: left; width: 25%; white-space: nowrap; }
+  .seg-table .pos { color: var(--muted); font-size: 11px; }
+  .seg-table .faster-time { font-weight: 800; background: rgba(220, 252, 231, 0.6); padding: 2px 6px; border-radius: 4px; }
+  .seg-table .behind { color: var(--muted); font-size: 11px; margin-left: 6px; }
 
   .winner-a { background: rgba(99,102,241,0.10); }
   .winner-b { background: rgba(22,163,74,0.10); }
@@ -195,22 +208,29 @@
 </style>
 
 <script>
-  function swapAthletes() {
-    const a = document.getElementById('a-input');
-    const b = document.getElementById('b-input');
-    const tmp = a.value; a.value = b.value; b.value = tmp;
-  }
+  // Sync visible input value into the hidden slug field on every keystroke.
+  // On dropdown pick (below), we override with the actual slug.
+  ['a', 'b'].forEach(slot => {
+    const inp = document.getElementById(slot + '-input');
+    const hid = document.getElementById(slot + '-slug');
+    if (!inp || !hid) return;
+    inp.addEventListener('input', () => { hid.value = inp.value; });
+  });
 
-  // Click handler is delegated so the dynamic search-results items work.
+  // Dropdown pick: set visible input to display name, hidden input to slug.
   document.addEventListener('mousedown', function(e) {
     const item = e.target.closest('.search-item');
-    if (!item) return;
+    if (!item || !item.dataset.slug) return;
     const slot = item.dataset.slot;
     const slug = item.dataset.slug;
+    const name = item.dataset.name || slug;
     const inputId = slot === 'a' ? 'a-input' : 'b-input';
+    const hiddenId = slot === 'a' ? 'a-slug' : 'b-slug';
     const resultsId = slot === 'a' ? 'a-results' : 'b-results';
     const inp = document.getElementById(inputId);
-    if (inp) inp.value = slug;
+    const hid = document.getElementById(hiddenId);
+    if (inp) inp.value = name;
+    if (hid) hid.value = slug;
     const res = document.getElementById(resultsId);
     if (res) { res.innerHTML = ''; res.classList.remove('open'); }
   });

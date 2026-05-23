@@ -1,8 +1,8 @@
 {% if entries %}
   {% for e in entries %}
-    <div class="search-item" data-slot="{{ slot }}" data-slug="{{ e.slug }}">
+    <div class="search-item" data-slot="{{ slot }}" data-slug="{{ e.slug }}" data-name="{{ e.full_name|e }}">
       <div class="name">{{ e.full_name }}</div>
-      <div class="meta">{{ e.country or '—' }}{% if e.gender %} · {{ e.gender }}{% endif %} · #{{ e.athlete_id }}</div>
+      <div class="meta">{{ e.country or '' }}{% if e.gender %} &middot; {{ e.gender }}{% endif %}</div>
     </div>
   {% endfor %}
 {% elif q %}

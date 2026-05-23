@@ -1,44 +1,87 @@
 {% set a = bundle.athlete_a %}
 {% set b = bundle.athlete_b %}
 {% set rows = bundle.race_log %}
-<div class="card">
-  <details class="race-log" {% if rows|length <= 8 %}open{% endif %}>
-    <summary>
-      Race-by-race ({{ rows|length }})
-    </summary>
-    {% if not rows %}
-      <p class="muted" style="padding: 12px 0;">No shared races.</p>
-    {% else %}
-    <table style="margin-top: 8px;">
-      <thead>
-        <tr>
-          <th>Date</th>
-          <th>Event</th>
-          <th>Distance</th>
-          <th style="text-align: center;"><span class="athlete-name-a">{{ a.full_name.split(' ')[0] }}</span></th>
-          <th style="text-align: center;"><span class="athlete-name-b">{{ b.full_name.split(' ')[0] }}</span></th>
-          <th style="text-align: right;">Gap</th>
-        </tr>
-      </thead>
+{% set htw = bundle.how_they_win %}
+{% set trans = bundle.transitions %}
+{% set rec = bundle.record %}
+
+{% macro h2h_mini(wins_a, wins_b) %}
+  {% set total = wins_a + wins_b %}
+  <div class="h2h-mini">
+    <span class="athlete-name-a">{{ a.full_name }}</span>
+    <strong style="color:#4f46e5;">{{ wins_a }}</strong>
+    <span class="muted">&nbsp;-&nbsp;</span>
+    <strong style="color:#15803d;">{{ wins_b }}</strong>
+    <span class="athlete-name-b">{{ b.full_name }}</span>
+    {% if total %}
+      {% if wins_a > wins_b %}
+        <span class="muted">({{ "%.0f"|format(100 * wins_a / total) }}%)</span>
+      {% elif wins_b > wins_a %}
+        <span class="muted">({{ "%.0f"|format(100 * wins_b / total) }}%)</span>
+      {% endif %}
+    {% endif %}
+  </div>
+{% endmacro %}
+
+{% macro seg_section(label, a_attr, b_attr, wins_a, wins_b, show_pos=False) %}
+  <div class="seg-section">
+    <div class="seg-section-header">
+      <h4>{{ label }}</h4>
+      {{ h2h_mini(wins_a, wins_b) }}
+    </div>
+    <table class="seg-table">
       <tbody>
         {% for r in rows %}
-        <tr class="{% if r.winner == 'a' %}winner-a{% elif r.winner == 'b' %}winner-b{% endif %}">
-          <td style="white-space: nowrap;">{{ r.event_date or '—' }}</td>
-          <td>{{ r.event_name }}{% if r.event_venue %} <span class="muted">— {{ r.event_venue }}</span>{% endif %}</td>
-          <td>{{ distance_label(r.distance) or r.prog_name or '' }}</td>
-          <td style="text-align: center;">
-            {% if r.pos_a %}{{ r.pos_a }}{% elif r.finish_status_a and r.finish_status_a not in ['FINISH','FINISHED','OK','OFFICIAL'] %}<span class="badge gray">{{ r.finish_status_a }}</span>{% else %}—{% endif %}
-          </td>
-          <td style="text-align: center;">
-            {% if r.pos_b %}{{ r.pos_b }}{% elif r.finish_status_b and r.finish_status_b not in ['FINISH','FINISHED','OK','OFFICIAL'] %}<span class="badge gray">{{ r.finish_status_b }}</span>{% else %}—{% endif %}
-          </td>
-          <td style="text-align: right; font-variant-numeric: tabular-nums;">
-            {% if r.gap_sec is not none %}{{ format_gap(r.gap_sec, signed=True) }}{% else %}—{% endif %}
-          </td>
-        </tr>
+          {% set a_val = r|attr(a_attr) %}
+          {% set b_val = r|attr(b_attr) %}
+          {% set both_present = a_val is not none and b_val is not none %}
+          {% set faster_a = both_present and a_val < b_val %}
+          {% set faster_b = both_present and b_val < a_val %}
+          <tr>
+            <td class="col-a">
+              {% if show_pos %}
+                {% if r.pos_a %}<span class="pos">{{ r.pos_a }}</span>&nbsp;{% elif r.finish_status_a and r.finish_status_a not in ['FINISH','FINISHED','OK','OFFICIAL'] %}<span class="badge red">{{ r.finish_status_a }}</span>&nbsp;{% endif %}
+              {% endif %}
+              {% if a_val is not none %}
+                {% if faster_a %}<span class="faster-time">{{ format_segment_time(a_val) }}</span>{% else %}{{ format_segment_time(a_val) }}{% endif %}
+                {% if faster_b %}<span class="behind">+{{ format_gap(a_val - b_val) }}</span>{% endif %}
+              {% elif r.finish_status_a and r.finish_status_a not in ['FINISH','FINISHED','OK','OFFICIAL'] %}
+                <span class="muted">&mdash;</span>
+              {% else %}
+                <span class="muted">&mdash;</span>
+              {% endif %}
+            </td>
+            <td class="col-race">{{ r.event_name }}</td>
+            <td class="col-b">
+              {% if b_val is not none %}
+                {% if faster_b %}<span class="faster-time">{{ format_segment_time(b_val) }}</span>{% else %}{{ format_segment_time(b_val) }}{% endif %}
+                {% if faster_a %}<span class="behind">+{{ format_gap(b_val - a_val) }}</span>{% endif %}
+              {% elif r.finish_status_b and r.finish_status_b not in ['FINISH','FINISHED','OK','OFFICIAL'] %}
+                <span class="muted">&mdash;</span>
+              {% else %}
+                <span class="muted">&mdash;</span>
+              {% endif %}
+              {% if show_pos %}
+                &nbsp;{% if r.pos_b %}<span class="pos">{{ r.pos_b }}</span>{% elif r.finish_status_b and r.finish_status_b not in ['FINISH','FINISHED','OK','OFFICIAL'] %}<span class="badge red">{{ r.finish_status_b }}</span>{% endif %}
+              {% endif %}
+            </td>
+          </tr>
         {% endfor %}
       </tbody>
     </table>
-    {% endif %}
-  </details>
+  </div>
+{% endmacro %}
+
+<div class="card">
+  <h3 class="section-title">RACE-BY-RACE COMPARISON</h3>
+  {% if not rows %}
+    <p class="muted" style="text-align: center; padding: 16px;">No shared races.</p>
+  {% else %}
+    {{ seg_section('Overall Results', 'total_a_sec', 'total_b_sec', rec.wins_a, rec.wins_b, show_pos=True) }}
+    {{ seg_section('Swim', 'swim_a_sec', 'swim_b_sec', htw.swim_wins_a, htw.swim_wins_b) }}
+    {{ seg_section('T1', 't1_a_sec', 't1_b_sec', trans.t1_wins_a, trans.t1_wins_b) }}
+    {{ seg_section('Bike', 'bike_a_sec', 'bike_b_sec', htw.bike_wins_a, htw.bike_wins_b) }}
+    {{ seg_section('T2', 't2_a_sec', 't2_b_sec', trans.t2_wins_a, trans.t2_wins_b) }}
+    {{ seg_section('Run', 'run_a_sec', 'run_b_sec', htw.run_wins_a, htw.run_wins_b) }}
+  {% endif %}
 </div>

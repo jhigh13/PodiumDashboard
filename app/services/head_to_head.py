@@ -140,10 +140,21 @@ class RaceLogRow:
     pos_b: int | None
     finish_status_a: str | None
     finish_status_b: str | None
+    # Per-segment times in seconds (None when split missing or athlete DNF'd)
+    swim_a_sec: float | None
+    swim_b_sec: float | None
+    t1_a_sec: float | None
+    t1_b_sec: float | None
+    bike_a_sec: float | None
+    bike_b_sec: float | None
+    t2_a_sec: float | None
+    t2_b_sec: float | None
+    run_a_sec: float | None
+    run_b_sec: float | None
     total_a_sec: float | None
     total_b_sec: float | None
-    gap_sec: float | None  # total_a - total_b
-    winner: str | None     # 'a' | 'b' | None
+    gap_sec: float | None  # total_a - total_b (None if either DNF)
+    winner: str | None     # 'a' | 'b' | None (finisher beats DNF; both-DNF = None)
 
 
 @dataclass
@@ -337,33 +348,63 @@ def _shared_races_df(
 
 
 def _build_record(shared: pd.DataFrame) -> H2HRecord:
+    """Build the H2H record across all shared races.
+
+    Counts a race when BOTH athletes appear (even if one DNF'd) — matches
+    Pro Tri News behavior. A finisher beats a non-finisher. Both-DNF is a
+    counted match but no winner. Avg gap is restricted to races where
+    both finished with valid total times.
+    """
     if shared.empty:
         return H2HRecord(0, 0, 0, 0, None, None, None, None, None)
-    finished = shared[_finished_mask(shared, "_a") & _finished_mask(shared, "_b")].copy()
-    if finished.empty:
-        return H2HRecord(0, 0, 0, 0, None, None, None, None, None)
-    a_total = finished["total_time_sec_a"]
-    b_total = finished["total_time_sec_b"]
-    valid = a_total.notna() & b_total.notna()
-    finished = finished[valid].copy()
-    if finished.empty:
-        return H2HRecord(0, 0, 0, 0, None, None, None, None, None)
 
-    a_total = finished["total_time_sec_a"]
-    b_total = finished["total_time_sec_b"]
-    wins_a = int((a_total < b_total).sum())
-    wins_b = int((b_total < a_total).sum())
-    ties = int((a_total == b_total).sum())
-    matches = len(finished)
-    avg_gap = float((a_total - b_total).mean())
+    df = shared.copy()
+    a_fin = _finished_mask(df, "_a").values
+    b_fin = _finished_mask(df, "_b").values
+    a_total = df["total_time_sec_a"].values if "total_time_sec_a" in df.columns else [None] * len(df)
+    b_total = df["total_time_sec_b"].values if "total_time_sec_b" in df.columns else [None] * len(df)
 
-    # Latest shared race (use event_date when available, otherwise first row).
+    wins_a = 0
+    wins_b = 0
+    ties = 0
+    for i in range(len(df)):
+        af, bf = bool(a_fin[i]), bool(b_fin[i])
+        ta, tb = a_total[i], b_total[i]
+        ta_ok = ta is not None and not pd.isna(ta)
+        tb_ok = tb is not None and not pd.isna(tb)
+        if af and bf and ta_ok and tb_ok:
+            if ta < tb:
+                wins_a += 1
+            elif tb < ta:
+                wins_b += 1
+            else:
+                ties += 1
+        elif af and not bf:
+            wins_a += 1
+        elif bf and not af:
+            wins_b += 1
+        # else: both DNF — counted in matches, no winner
+
+    matches = len(df)
+
+    # Avg gap is for FINISHED-BOTH races only (per user feedback)
+    finished_both = df[
+        _finished_mask(df, "_a")
+        & _finished_mask(df, "_b")
+        & df["total_time_sec_a"].notna()
+        & df["total_time_sec_b"].notna()
+    ]
+    avg_gap = None
+    if not finished_both.empty:
+        avg_gap = float((finished_both["total_time_sec_a"] - finished_both["total_time_sec_b"]).mean())
+
+    # Latest shared race (any finish status)
     last_idx = None
-    if "event_date" in finished.columns and finished["event_date"].notna().any():
-        last_idx = finished["event_date"].idxmax()
+    if "event_date" in df.columns and df["event_date"].notna().any():
+        last_idx = df["event_date"].idxmax()
     else:
-        last_idx = finished.index[-1]
-    last_row = finished.loc[last_idx]
+        last_idx = df.index[-1]
+    last_row = df.loc[last_idx]
     last_event = str(last_row.get("event_name") or "") or None
     last_date = last_row.get("event_date")
     if isinstance(last_date, pd.Timestamp):
@@ -580,24 +621,35 @@ def _build_race_log(shared: pd.DataFrame) -> list[RaceLogRow]:
     if shared.empty:
         return []
     df = shared.copy()
-    # Sort newest first
     if "event_date" in df.columns:
         df = df.sort_values("event_date", ascending=False, na_position="last")
+
+    def _f(v):
+        return float(v) if v is not None and not pd.isna(v) else None
+
     rows: list[RaceLogRow] = []
     for _, r in df.iterrows():
         a_fin = str(r.get("finish_status_a") or "").upper().strip()
         b_fin = str(r.get("finish_status_b") or "").upper().strip()
-        ta = r.get("total_time_sec_a")
-        tb = r.get("total_time_sec_b")
-        ta = float(ta) if pd.notna(ta) else None
-        tb = float(tb) if pd.notna(tb) else None
-        gap = (ta - tb) if (ta is not None and tb is not None) else None
+        ta = _f(r.get("total_time_sec_a"))
+        tb = _f(r.get("total_time_sec_b"))
+        a_finished = a_fin in _FINISHED_STATUSES
+        b_finished = b_fin in _FINISHED_STATUSES
+
+        # Gap and winner: gap only if both have valid total times AND both finished
+        gap = None
         winner: str | None = None
-        if a_fin in _FINISHED_STATUSES and b_fin in _FINISHED_STATUSES and ta is not None and tb is not None:
+        if a_finished and b_finished and ta is not None and tb is not None:
+            gap = ta - tb
             if ta < tb:
                 winner = "a"
             elif tb < ta:
                 winner = "b"
+        elif a_finished and not b_finished:
+            winner = "a"
+        elif b_finished and not a_finished:
+            winner = "b"
+
         pos_a = r.get("finish_position_a")
         pos_b = r.get("finish_position_b")
         ed = r.get("event_date")
@@ -617,6 +669,16 @@ def _build_race_log(shared: pd.DataFrame) -> list[RaceLogRow]:
             pos_b=int(pos_b) if pd.notna(pos_b) else None,
             finish_status_a=a_fin or None,
             finish_status_b=b_fin or None,
+            swim_a_sec=_f(r.get("swimtime_sec_a")),
+            swim_b_sec=_f(r.get("swimtime_sec_b")),
+            t1_a_sec=_f(r.get("t1time_sec_a")),
+            t1_b_sec=_f(r.get("t1time_sec_b")),
+            bike_a_sec=_f(r.get("biketime_sec_a")),
+            bike_b_sec=_f(r.get("biketime_sec_b")),
+            t2_a_sec=_f(r.get("t2time_sec_a")),
+            t2_b_sec=_f(r.get("t2time_sec_b")),
+            run_a_sec=_f(r.get("runtime_sec_a")),
+            run_b_sec=_f(r.get("runtime_sec_b")),
             total_a_sec=ta,
             total_b_sec=tb,
             gap_sec=gap,
@@ -768,6 +830,11 @@ def _swap_bundle(bundle: CompareBundle) -> CompareBundle:
             prog_name=r.prog_name,
             pos_a=r.pos_b, pos_b=r.pos_a,
             finish_status_a=r.finish_status_b, finish_status_b=r.finish_status_a,
+            swim_a_sec=r.swim_b_sec, swim_b_sec=r.swim_a_sec,
+            t1_a_sec=r.t1_b_sec, t1_b_sec=r.t1_a_sec,
+            bike_a_sec=r.bike_b_sec, bike_b_sec=r.bike_a_sec,
+            t2_a_sec=r.t2_b_sec, t2_b_sec=r.t2_a_sec,
+            run_a_sec=r.run_b_sec, run_b_sec=r.run_a_sec,
             total_a_sec=r.total_b_sec, total_b_sec=r.total_a_sec,
             gap_sec=(-r.gap_sec if r.gap_sec is not None else None),
             winner=("b" if r.winner == "a" else ("a" if r.winner == "b" else None)),
