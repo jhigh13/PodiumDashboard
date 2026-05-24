@@ -20,19 +20,19 @@
     <div class="col" style="position: relative; flex: 1 1 280px;">
       <label style="font-size: 12px; font-weight: 650; color: var(--muted); display:block; margin-bottom: 4px;">Athlete A</label>
       <input
-        type="text" id="a-input"
+        type="text" name="a" id="a-input"
         value="{{ athlete_a.full_name if athlete_a else a_param }}"
         placeholder="Start typing a name..."
         autocomplete="off"
         hx-get="/partials/compare/search"
         hx-target="#a-results" hx-swap="innerHTML"
         hx-trigger="keyup changed delay:200ms, focus"
-        hx-vals='js:{q: document.getElementById("a-input").value, slot: "a"}'
-        hx-params="none"
+        hx-vals='{"slot":"a"}'
+        hx-params="a, slot"
         onfocus="document.getElementById('a-results').classList.add('open')"
         onblur="setTimeout(() => document.getElementById('a-results').classList.remove('open'), 180)"
         style="width: 100%;">
-      <input type="hidden" name="a" id="a-slug" value="{{ athlete_a.slug if athlete_a else a_param }}">
+      <input type="hidden" name="a_slug" id="a-slug" value="{{ athlete_a.slug if athlete_a else a_param }}">
       <div id="a-results" class="search-results"></div>
       {% if athlete_a %}<div class="muted" style="font-size: 12px; margin-top: 4px;">{{ athlete_a.country or '' }}</div>{% endif %}
     </div>
@@ -40,19 +40,19 @@
     <div class="col" style="position: relative; flex: 1 1 280px;">
       <label style="font-size: 12px; font-weight: 650; color: var(--muted); display:block; margin-bottom: 4px;">Athlete B</label>
       <input
-        type="text" id="b-input"
+        type="text" name="b" id="b-input"
         value="{{ athlete_b.full_name if athlete_b else b_param }}"
         placeholder="Start typing a name..."
         autocomplete="off"
         hx-get="/partials/compare/search"
         hx-target="#b-results" hx-swap="innerHTML"
         hx-trigger="keyup changed delay:200ms, focus"
-        hx-vals='js:{q: document.getElementById("b-input").value, slot: "b"}'
-        hx-params="none"
+        hx-vals='{"slot":"b"}'
+        hx-params="b, slot"
         onfocus="document.getElementById('b-results').classList.add('open')"
         onblur="setTimeout(() => document.getElementById('b-results').classList.remove('open'), 180)"
         style="width: 100%;">
-      <input type="hidden" name="b" id="b-slug" value="{{ athlete_b.slug if athlete_b else b_param }}">
+      <input type="hidden" name="b_slug" id="b-slug" value="{{ athlete_b.slug if athlete_b else b_param }}">
       <div id="b-results" class="search-results"></div>
       {% if athlete_b %}<div class="muted" style="font-size: 12px; margin-top: 4px;">{{ athlete_b.country or '' }}</div>{% endif %}
     </div>
@@ -90,6 +90,10 @@
 
   <div hx-get="/partials/compare/pack_profile?a={{ a_id }}&b={{ b_id }}" hx-trigger="load">
     <div class="card"><p class="muted">Loading pack profile...</p></div>
+  </div>
+
+  <div hx-get="/partials/compare/context?a={{ a_id }}&b={{ b_id }}" hx-trigger="load">
+    <div class="card"><p class="muted">Loading context &amp; conditions...</p></div>
   </div>
 
   <div hx-get="/partials/compare/race_log?a={{ a_id }}&b={{ b_id }}" hx-trigger="load">

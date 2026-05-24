@@ -62,8 +62,20 @@ def register_compare_routes(app: FastAPI, templates: Jinja2Templates) -> None:
     templates.env.globals["from_today_days"] = _from_today_days
 
     @app.get("/compare", response_class=HTMLResponse)
-    def compare_page(request: Request, a: str | None = None, b: str | None = None):
-        athlete_a, athlete_b = _resolve_pair(a, b)
+    def compare_page(
+        request: Request,
+        a: str | None = None,
+        b: str | None = None,
+        a_slug: str | None = None,
+        b_slug: str | None = None,
+    ):
+        # Picker submits BOTH the typed text (a, b) and the hidden slug
+        # (a_slug, b_slug). Prefer the slug — it's what the user actually
+        # picked from the dropdown. Fall back to the typed text, which
+        # resolve_athlete slugifies if needed.
+        a_value = (a_slug or a or "").strip() or None
+        b_value = (b_slug or b or "").strip() or None
+        athlete_a, athlete_b = _resolve_pair(a_value, b_value)
         no_db = get_triathlon_engine() is None
         return templates.TemplateResponse(
             "compare.html",
@@ -72,8 +84,8 @@ def register_compare_routes(app: FastAPI, templates: Jinja2Templates) -> None:
                 "title": "Athlete Compare",
                 "athlete_a": athlete_a,
                 "athlete_b": athlete_b,
-                "a_param": a or "",
-                "b_param": b or "",
+                "a_param": a_value or "",
+                "b_param": b_value or "",
                 "no_db": no_db,
             },
         )
@@ -158,6 +170,17 @@ def register_compare_routes(app: FastAPI, templates: Jinja2Templates) -> None:
             return HTMLResponse(_error_card("Could not load race log."), headers=CACHE_HEADERS)
         return templates.TemplateResponse(
             "partials/compare_race_log.html",
+            {"request": request, "bundle": bundle},
+            headers=CACHE_HEADERS,
+        )
+
+    @app.get("/partials/compare/context", response_class=HTMLResponse)
+    def partial_context(request: Request, a: int, b: int):
+        bundle = _get_bundle_or_none(a, b)
+        if bundle is None:
+            return HTMLResponse(_error_card("Could not load context."), headers=CACHE_HEADERS)
+        return templates.TemplateResponse(
+            "partials/compare_context.html",
             {"request": request, "bundle": bundle},
             headers=CACHE_HEADERS,
         )

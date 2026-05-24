@@ -16,7 +16,7 @@
       <div class="v-left">
         {% if pa.front_after_swim_pct is not none %}{{ "%.0f"|format(pa.front_after_swim_pct * 100) }}%{% else %}—{% endif %}
       </div>
-      <div class="label">FRONT GROUP<br>AFTER SWIM<br><span style="font-weight:500; opacity:0.7;">(within 30s)</span></div>
+      <div class="label">FRONT GROUP<br>AFTER SWIM<br><span style="font-weight:500; opacity:0.7;">(within 20s)</span></div>
       <div class="v-right">
         {% if pb.front_after_swim_pct is not none %}{{ "%.0f"|format(pb.front_after_swim_pct * 100) }}%{% else %}—{% endif %}
       </div>
@@ -26,7 +26,7 @@
       <div class="v-left">
         {% if pa.front_after_bike_pct is not none %}{{ "%.0f"|format(pa.front_after_bike_pct * 100) }}%{% else %}—{% endif %}
       </div>
-      <div class="label">FRONT GROUP<br>AFTER BIKE<br><span style="font-weight:500; opacity:0.7;">(within 15s)</span></div>
+      <div class="label">FRONT GROUP<br>AFTER BIKE<br><span style="font-weight:500; opacity:0.7;">(within 10s)</span></div>
       <div class="v-right">
         {% if pb.front_after_bike_pct is not none %}{{ "%.0f"|format(pb.front_after_bike_pct * 100) }}%{% else %}—{% endif %}
       </div>
@@ -62,7 +62,7 @@
     {% endif %}
 
     <p class="muted" style="font-size: 11px; text-align: center; margin-top: 12px;">
-      Front group = within 30s on swim, 15s on bike. Reveals racing style: swimmers stay with the front pack; runners ride forward to make it.
+      Front group = within 20s on swim, 10s on bike. Reveals racing style: swimmers stay with the front pack; runners ride forward to make it.
     </p>
   {% endif %}
 </div>

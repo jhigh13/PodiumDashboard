@@ -107,8 +107,8 @@ class PackProfile:
     avg_bike_gap_to_leader_sec: float | None
 
 
-FRONT_SWIM_GAP_SEC = 30
-FRONT_BIKE_GAP_SEC = 15
+FRONT_SWIM_GAP_SEC = 20
+FRONT_BIKE_GAP_SEC = 10
 
 
 @dataclass
@@ -158,6 +158,23 @@ class RaceLogRow:
 
 
 @dataclass
+class SubsetRecord:
+    """H2H record restricted to a subset of shared races (e.g. wetsuit-only)."""
+    label: str
+    matches: int
+    wins_a: int
+    wins_b: int
+
+
+@dataclass
+class ContextH2H:
+    """Environmental / contextual H2H breakdowns."""
+    wetsuit: SubsetRecord
+    non_wetsuit: SubsetRecord
+    unknown_wetsuit_matches: int
+
+
+@dataclass
 class CompareBundle:
     athlete_a: AthleteRef
     athlete_b: AthleteRef
@@ -167,6 +184,7 @@ class CompareBundle:
     pack_profile: list[PackProfile]   # always length 2: [a, b]
     transitions: TransitionH2H
     race_log: list[RaceLogRow]
+    context: ContextH2H | None = None
     # Diagnostics
     has_any_shared: bool = True
     notes: list[str] = field(default_factory=list)
@@ -230,6 +248,7 @@ def fetch_athlete_races(athlete_id: int, *, engine: Engine) -> pd.DataFrame:
             e.event_name, e.event_venue, e.event_date, e.event_country,
             e.prog_name, e.prog_distance_category, e.is_para,
             e.swim_distance, e.bike_distance, e.run_distance,
+            e.wetsuit, e.temperature_water, e.temperature_air, e.wbgt,
             pm.elapsedswim, pm.elapsedt1, pm.elapsedbike, pm.elapsedt2, pm.elapsedrun,
             pm.behindswim, pm.behindt1, pm.behindbike, pm.behindt2, pm.behindrun,
             pm.position_at_swim, pm.position_at_t1, pm.position_at_bike,
@@ -327,6 +346,7 @@ def _shared_races_df(
         "event_name", "event_venue", "event_date", "event_country",
         "prog_name", "prog_distance_category", "is_para",
         "swim_distance", "bike_distance", "run_distance",
+        "wetsuit", "temperature_water", "temperature_air", "wbgt",
     ):
         a_col, b_col = f"{col}_a", f"{col}_b"
         if a_col in merged.columns and b_col in merged.columns:
@@ -617,6 +637,68 @@ def _build_transitions(shared: pd.DataFrame) -> TransitionH2H:
     )
 
 
+_WETSUIT_LEGAL = {"mandatory", "allowed", "true", "yes", "y", "1"}
+_WETSUIT_FORBIDDEN = {"forbidden", "false", "no", "n", "0"}
+
+
+def _classify_wetsuit(value: object) -> bool | None:
+    """Classify a row's wetsuit column. True=wetsuit-legal, False=non-wetsuit, None=unknown."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    v = str(value).strip().lower()
+    if not v:
+        return None
+    if v in _WETSUIT_LEGAL:
+        return True
+    if v in _WETSUIT_FORBIDDEN:
+        return False
+    return None
+
+
+def _subset_record(df: pd.DataFrame, label: str) -> SubsetRecord:
+    """Count wins on a subset using the same rules as _build_record."""
+    if df.empty:
+        return SubsetRecord(label=label, matches=0, wins_a=0, wins_b=0)
+    a_fin = _finished_mask(df, "_a").values
+    b_fin = _finished_mask(df, "_b").values
+    a_total = df["total_time_sec_a"].values if "total_time_sec_a" in df.columns else [None] * len(df)
+    b_total = df["total_time_sec_b"].values if "total_time_sec_b" in df.columns else [None] * len(df)
+    wa, wb = 0, 0
+    for i in range(len(df)):
+        af, bf = bool(a_fin[i]), bool(b_fin[i])
+        ta, tb = a_total[i], b_total[i]
+        ta_ok = ta is not None and not pd.isna(ta)
+        tb_ok = tb is not None and not pd.isna(tb)
+        if af and bf and ta_ok and tb_ok:
+            if ta < tb:
+                wa += 1
+            elif tb < ta:
+                wb += 1
+        elif af and not bf:
+            wa += 1
+        elif bf and not af:
+            wb += 1
+    return SubsetRecord(label=label, matches=len(df), wins_a=wa, wins_b=wb)
+
+
+def _build_context(shared: pd.DataFrame) -> ContextH2H:
+    if shared.empty or "wetsuit" not in shared.columns:
+        return ContextH2H(
+            wetsuit=SubsetRecord("Wetsuit", 0, 0, 0),
+            non_wetsuit=SubsetRecord("Non-Wetsuit", 0, 0, 0),
+            unknown_wetsuit_matches=0,
+        )
+    classified = shared["wetsuit"].map(_classify_wetsuit)
+    wetsuit_df = shared[classified == True]
+    nonwetsuit_df = shared[classified == False]
+    unknown_count = int((classified.isna()).sum())
+    return ContextH2H(
+        wetsuit=_subset_record(wetsuit_df, "Wetsuit"),
+        non_wetsuit=_subset_record(nonwetsuit_df, "Non-Wetsuit"),
+        unknown_wetsuit_matches=unknown_count,
+    )
+
+
 def _build_race_log(shared: pd.DataFrame) -> list[RaceLogRow]:
     if shared.empty:
         return []
@@ -755,6 +837,11 @@ def build_compare_bundle(
             pack_profile=[_empty_pack_profile(int(a_id)), _empty_pack_profile(int(b_id))],
             transitions=TransitionH2H(0, 0, 0, 0, 0, 0, None, None, None, None, None, None),
             race_log=[],
+            context=ContextH2H(
+                wetsuit=SubsetRecord("Wetsuit", 0, 0, 0),
+                non_wetsuit=SubsetRecord("Non-Wetsuit", 0, 0, 0),
+                unknown_wetsuit_matches=0,
+            ),
             has_any_shared=False,
         )
         if use_cache:
@@ -778,6 +865,7 @@ def build_compare_bundle(
         ],
         transitions=_build_transitions(shared),
         race_log=_build_race_log(shared),
+        context=_build_context(shared),
         has_any_shared=True,
     )
     if use_cache:
@@ -841,6 +929,20 @@ def _swap_bundle(bundle: CompareBundle) -> CompareBundle:
         )
         for r in bundle.race_log
     ]
+    ctx = bundle.context
+    ctx_swapped = None
+    if ctx is not None:
+        ctx_swapped = ContextH2H(
+            wetsuit=SubsetRecord(
+                label=ctx.wetsuit.label, matches=ctx.wetsuit.matches,
+                wins_a=ctx.wetsuit.wins_b, wins_b=ctx.wetsuit.wins_a,
+            ),
+            non_wetsuit=SubsetRecord(
+                label=ctx.non_wetsuit.label, matches=ctx.non_wetsuit.matches,
+                wins_a=ctx.non_wetsuit.wins_b, wins_b=ctx.non_wetsuit.wins_a,
+            ),
+            unknown_wetsuit_matches=ctx.unknown_wetsuit_matches,
+        )
     return CompareBundle(
         athlete_a=bundle.athlete_b,
         athlete_b=bundle.athlete_a,
@@ -850,6 +952,7 @@ def _swap_bundle(bundle: CompareBundle) -> CompareBundle:
         pack_profile=pp_swapped,
         transitions=tr_swapped,
         race_log=log_swapped,
+        context=ctx_swapped,
         has_any_shared=bundle.has_any_shared,
         notes=list(bundle.notes),
     )
