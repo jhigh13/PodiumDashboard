@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="margin-bottom: 12px;">
+  <a href="/compare?a={{ athlete_a.slug if athlete_a else '' }}&b={{ athlete_b.slug if athlete_b else '' }}"
+     style="font-size: 13px;">&larr; Back to comparison</a>
+</div>
+
+{% if error or not detail %}
+  <div class="card">
+    <p class="muted">{{ error or 'Could not load race detail.' }}</p>
+  </div>
+{% else %}
+
+{# ----- HEADER ----- #}
+<div class="card" style="padding: 16px 18px;">
+  <div style="display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 12px;">
+    <h2 style="margin: 0; color: #c8102e;">{{ detail.event.event_name }}</h2>
+    <div style="font-size: 13px; color: var(--muted);">
+      {% if detail.event.event_date %}{{ detail.event.event_date.strftime('%b %d, %Y') }}{% endif %}
+      {% if detail.event.event_venue %} &middot; {{ detail.event.event_venue }}{% endif %}
+      {% if detail.event.event_country %}, {{ detail.event.event_country }}{% endif %}
+    </div>
+  </div>
+  <div style="margin-top: 6px; font-size: 13px; color: var(--muted);">
+    {% if detail.event.distance %}<span class="badge blue">{{ detail.event.distance }}</span>{% endif %}
+    {% if detail.event.prog_name %}<span class="badge gray" style="margin-left: 4px;">{{ detail.event.prog_name }}</span>{% endif %}
+    {% if detail.event.swim_distance_m %}<span style="margin-left: 10px;">Swim {{ "%.0f"|format(detail.event.swim_distance_m) }}m</span>{% endif %}
+    {% if detail.event.bike_distance_m %}<span style="margin-left: 10px;">Bike {{ "%.1f"|format(detail.event.bike_distance_m / 1000) }}km</span>{% endif %}
+    {% if detail.event.run_distance_m %}<span style="margin-left: 10px;">Run {{ "%.1f"|format(detail.event.run_distance_m / 1000) }}km</span>{% endif %}
+  </div>
+</div>
+
+{# ----- CONDITIONS + PODIUM ROW ----- #}
+<div class="row">
+  <div class="col">
+    <div class="card">
+      <h3 class="section-title">CONDITIONS</h3>
+      {% set c = detail.conditions %}
+      {% set anything = c.temperature_water_c is not none or c.temperature_air_c is not none or c.wbgt_c is not none or c.wetsuit or c.weather or c.wind or c.wind_speed_kmh is not none %}
+      {% if not anything %}
+        <p class="muted" style="text-align:center;">No conditions data recorded.</p>
+      {% else %}
+        <table style="font-size: 13px;">
+          <tbody>
+            {% if c.temperature_water_c is not none %}<tr><td class="muted">Water temp</td><td><strong>{{ "%.1f"|format(c.temperature_water_c) }}°C</strong></td></tr>{% endif %}
+            {% if c.temperature_air_c is not none %}<tr><td class="muted">Air temp</td><td><strong>{{ "%.1f"|format(c.temperature_air_c) }}°C</strong></td></tr>{% endif %}
+            {% if c.wbgt_c is not none %}<tr><td class="muted">WBGT</td><td><strong>{{ "%.1f"|format(c.wbgt_c) }}°C</strong>{% if c.wbgt_c >= 28 %} <span class="badge red" style="font-size:10px;">HOT</span>{% endif %}</td></tr>{% endif %}
+            {% if c.wetsuit %}<tr><td class="muted">Wetsuit</td><td><strong>{{ c.wetsuit|capitalize }}</strong></td></tr>{% endif %}
+            {% if c.weather %}<tr><td class="muted">Weather</td><td>{{ c.weather }}</td></tr>{% endif %}
+            {% if c.wind %}<tr><td class="muted">Wind</td><td>{{ c.wind }}{% if c.wind_speed_kmh is not none %} ({{ "%.0f"|format(c.wind_speed_kmh) }} km/h){% endif %}</td></tr>{% elif c.wind_speed_kmh is not none %}<tr><td class="muted">Wind</td><td>{{ "%.0f"|format(c.wind_speed_kmh) }} km/h</td></tr>{% endif %}
+            {% if c.precipitation_mm is not none and c.precipitation_mm > 0 %}<tr><td class="muted">Precipitation</td><td>{{ "%.1f"|format(c.precipitation_mm) }} mm</td></tr>{% endif %}
+          </tbody>
+        </table>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col">
+    <div class="card">
+      <h3 class="section-title">PODIUM</h3>
+      {% if not detail.podium %}
+        <p class="muted" style="text-align:center;">No podium data.</p>
+      {% else %}
+        <table style="font-size: 13px;">
+          <tbody>
+            {% for p in detail.podium %}
+              {% set medal_color = ['#FFD700','#C0C0C0','#CD7F32'][loop.index0] %}
+              <tr>
+                <td style="width: 36px;"><span class="medal" style="background:{{ medal_color }};">{{ p.rank }}</span></td>
+                <td>
+                  <strong>{{ p.full_name }}</strong>
+                  {% if p.country %}<span class="muted" style="font-size:11px;"> {{ p.country }}</span>{% endif %}
+                </td>
+                <td style="text-align: right; font-variant-numeric: tabular-nums;">{{ format_segment_time(p.total_time_sec) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# ----- CHARTS ROW ----- #}
+<div class="row">
+  <div class="col">
+    <div class="card">
+      <div id="race-pos-chart" style="width: 100%; height: 340px;"></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card">
+      <div id="race-gap-chart" style="width: 100%; height: 340px;"></div>
+    </div>
+  </div>
+</div>
+
+{# ----- SPLITS TABLE ----- #}
+<div class="card">
+  <h3 class="section-title">SPLITS</h3>
+  {% set a = detail.athlete_a %}
+  {% set b = detail.athlete_b %}
+  {% if not a and not b %}
+    <p class="muted" style="text-align:center;">Neither athlete raced this event.</p>
+  {% else %}
+    <table class="splits-table">
+      <thead>
+        <tr>
+          <th class="left" style="width: 30%;">
+            <span class="athlete-name-a">{{ athlete_a.full_name }}</span>
+            {% if a and a.finish_position %}<span class="muted" style="font-size: 11px;">&nbsp;#{{ a.finish_position }}</span>
+            {% elif a and a.finish_status and a.finish_status not in ['FINISH','FINISHED','OK','OFFICIAL'] %}<span class="badge red" style="font-size: 10px;">{{ a.finish_status }}</span>
+            {% elif not a %}<span class="muted">— did not race</span>{% endif %}
+          </th>
+          <th class="dist" style="width: 40%;">Stage</th>
+          <th class="right" style="width: 30%;">
+            <span class="athlete-name-b">{{ athlete_b.full_name }}</span>
+            {% if b and b.finish_position %}<span class="muted" style="font-size: 11px;">&nbsp;#{{ b.finish_position }}</span>
+            {% elif b and b.finish_status and b.finish_status not in ['FINISH','FINISHED','OK','OFFICIAL'] %}<span class="badge red" style="font-size: 10px;">{{ b.finish_status }}</span>
+            {% elif not b %}<span class="muted">— did not race</span>{% endif %}
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {% macro split_row(label, a_val, b_val, a_rank=None, b_rank=None) %}
+          {% set faster_a = a_val is not none and b_val is not none and a_val < b_val %}
+          {% set faster_b = a_val is not none and b_val is not none and b_val < a_val %}
+          <tr>
+            <td class="left {% if faster_a %}faster{% endif %}">
+              {{ format_segment_time(a_val) }}
+              {% if a_rank %}<span class="muted" style="font-size: 11px;">&nbsp;rank {{ a_rank }}</span>{% endif %}
+              {% if faster_b and a_val is not none and b_val is not none %}<span class="behind">+{{ format_gap(a_val - b_val) }}</span>{% endif %}
+            </td>
+            <td class="seg">{{ label }}</td>
+            <td class="right {% if faster_b %}faster{% endif %}">
+              {{ format_segment_time(b_val) }}
+              {% if b_rank %}<span class="muted" style="font-size: 11px;">&nbsp;rank {{ b_rank }}</span>{% endif %}
+              {% if faster_a and a_val is not none and b_val is not none %}<span class="behind">+{{ format_gap(b_val - a_val) }}</span>{% endif %}
+            </td>
+          </tr>
+        {% endmacro %}
+        {{ split_row('SWIM', (a.swim_sec if a else none), (b.swim_sec if b else none), (a.rank_swim if a else none), (b.rank_swim if b else none)) }}
+        {{ split_row('T1', (a.t1_sec if a else none), (b.t1_sec if b else none), (a.rank_t1 if a else none), (b.rank_t1 if b else none)) }}
+        {{ split_row('BIKE', (a.bike_sec if a else none), (b.bike_sec if b else none), (a.rank_bike if a else none), (b.rank_bike if b else none)) }}
+        {{ split_row('T2', (a.t2_sec if a else none), (b.t2_sec if b else none), (a.rank_t2 if a else none), (b.rank_t2 if b else none)) }}
+        {{ split_row('RUN', (a.run_sec if a else none), (b.run_sec if b else none), (a.rank_run if a else none), (b.rank_run if b else none)) }}
+        {{ split_row('OVERALL', (a.total_sec if a else none), (b.total_sec if b else none)) }}
+      </tbody>
+    </table>
+  {% endif %}
+</div>
+
+<style>
+  .medal {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 999px; font-weight: 800;
+    font-size: 13px; color: #1f2937;
+  }
+  .splits-table th, .splits-table td { text-align: center; }
+  .splits-table .seg { font-weight: 700; color: var(--muted); letter-spacing: 0.05em; font-size: 11px; }
+  .splits-table .faster { font-weight: 800; background: rgba(220, 252, 231, 0.6); }
+  .splits-table .left  { text-align: right; padding-right: 16px; }
+  .splits-table .right { text-align: left;  padding-left: 16px; }
+  .splits-table .behind { color: var(--muted); font-size: 11px; margin-left: 6px; }
+  .athlete-name-a { color: #4f46e5; font-weight: 700; }
+  .athlete-name-b { color: #15803d; font-weight: 700; }
+  .section-title { color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-align: center; margin: 0 0 12px; }
+</style>
+
+<script>
+  (function() {
+    var posTraces = {{ pos_traces | tojson }};
+    var posLayout = {{ pos_layout | tojson }};
+    var gapTraces = {{ gap_traces | tojson }};
+    var gapLayout = {{ gap_layout | tojson }};
+    if (window.Plotly) {
+      Plotly.newPlot('race-pos-chart', posTraces, posLayout, {responsive: true, displayModeBar: false});
+      Plotly.newPlot('race-gap-chart', gapTraces, gapLayout, {responsive: true, displayModeBar: false});
+    }
+  })();
+</script>
+
+{% endif %}
+{% endblock %}

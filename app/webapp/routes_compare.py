@@ -19,11 +19,13 @@ from app.services.head_to_head import (
     build_compare_bundle,
     resolve_athlete,
 )
+from app.services.race_detail import RaceAthleteData, get_race_detail
 from app.utils.timefmt import (
     distance_label,
     format_gap,
     format_segment_time,
     humanize_elapsed_since,
+    seconds_to_hms,
 )
 
 
@@ -185,6 +187,138 @@ def register_compare_routes(app: FastAPI, templates: Jinja2Templates) -> None:
             headers=CACHE_HEADERS,
         )
 
+    @app.get("/compare/race/{event_id}/{prog_id}", response_class=HTMLResponse)
+    def race_detail_page(
+        request: Request,
+        event_id: int,
+        prog_id: int,
+        a: str | None = None,
+        b: str | None = None,
+    ):
+        athlete_a = resolve_athlete(a)
+        athlete_b = resolve_athlete(b)
+        engine = get_triathlon_engine()
+        if engine is None or athlete_a is None or athlete_b is None:
+            return templates.TemplateResponse(
+                "compare_race_detail.html",
+                {
+                    "request": request,
+                    "title": "Race detail",
+                    "athlete_a": athlete_a,
+                    "athlete_b": athlete_b,
+                    "detail": None,
+                    "error": "Could not resolve athletes or database not configured.",
+                },
+            )
+        detail = get_race_detail(
+            event_id, prog_id,
+            athlete_a.athlete_id, athlete_b.athlete_id,
+            engine=engine,
+        )
+        pos_traces, pos_layout, gap_traces, gap_layout = _build_race_charts(detail, athlete_a, athlete_b)
+        return templates.TemplateResponse(
+            "compare_race_detail.html",
+            {
+                "request": request,
+                "title": (detail.event.event_name if detail else "Race detail"),
+                "athlete_a": athlete_a,
+                "athlete_b": athlete_b,
+                "detail": detail,
+                "pos_traces": pos_traces,
+                "pos_layout": pos_layout,
+                "gap_traces": gap_traces,
+                "gap_layout": gap_layout,
+                "error": None,
+            },
+        )
+
 
 def _error_card(msg: str) -> str:
     return f'<div class="card"><p class="muted">{msg}</p></div>'
+
+
+_STAGE_LABELS = ["Swim", "T1", "Bike", "T2", "Run"]
+
+
+def _build_race_charts(detail, athlete_a, athlete_b):
+    """Construct Plotly trace/layout dicts for the position + gap charts."""
+    if detail is None:
+        return [], {}, [], {}
+
+    def _series(athlete: RaceAthleteData | None, attr_prefix: str):
+        if athlete is None:
+            return [None] * 5
+        return [
+            getattr(athlete, f"{attr_prefix}_swim"),
+            getattr(athlete, f"{attr_prefix}_t1"),
+            getattr(athlete, f"{attr_prefix}_bike"),
+            getattr(athlete, f"{attr_prefix}_t2"),
+            getattr(athlete, f"{attr_prefix}_run"),
+        ]
+
+    a_pos = _series(detail.athlete_a, "pos")
+    b_pos = _series(detail.athlete_b, "pos")
+    a_gap = _series(detail.athlete_a, "gap")
+    b_gap = _series(detail.athlete_b, "gap")
+
+    a_name = athlete_a.full_name if athlete_a else "Athlete A"
+    b_name = athlete_b.full_name if athlete_b else "Athlete B"
+    a_color = "#4f46e5"
+    b_color = "#15803d"
+    a_dash = "solid" if detail.athlete_a and detail.athlete_a.finish_status in {"FINISH", "FINISHED", "OK", "OFFICIAL"} else "dot"
+    b_dash = "solid" if detail.athlete_b and detail.athlete_b.finish_status in {"FINISH", "FINISHED", "OK", "OFFICIAL"} else "dot"
+
+    common_axis = {"showgrid": True, "gridcolor": "#e2e8f0"}
+
+    pos_traces = [
+        {
+            "x": _STAGE_LABELS, "y": a_pos, "name": a_name,
+            "mode": "lines+markers", "type": "scatter",
+            "line": {"color": a_color, "width": 3, "dash": a_dash},
+            "marker": {"size": 11, "color": a_color},
+            "connectgaps": False,
+        },
+        {
+            "x": _STAGE_LABELS, "y": b_pos, "name": b_name,
+            "mode": "lines+markers", "type": "scatter",
+            "line": {"color": b_color, "width": 3, "dash": b_dash},
+            "marker": {"size": 11, "color": b_color},
+            "connectgaps": False,
+        },
+    ]
+    pos_layout = {
+        "title": "Position by Stage",
+        "xaxis": {"title": "", **common_axis},
+        "yaxis": {"title": "Position (1 = leader)", "autorange": "reversed", **common_axis},
+        "hovermode": "x unified",
+        "legend": {"orientation": "h", "y": -0.15},
+        "margin": {"l": 60, "r": 20, "t": 50, "b": 60},
+        "paper_bgcolor": "white", "plot_bgcolor": "white",
+    }
+
+    gap_traces = [
+        {
+            "x": _STAGE_LABELS, "y": a_gap, "name": a_name,
+            "mode": "lines+markers", "type": "scatter",
+            "line": {"color": a_color, "width": 3, "dash": a_dash},
+            "marker": {"size": 11, "color": a_color},
+            "connectgaps": False,
+        },
+        {
+            "x": _STAGE_LABELS, "y": b_gap, "name": b_name,
+            "mode": "lines+markers", "type": "scatter",
+            "line": {"color": b_color, "width": 3, "dash": b_dash},
+            "marker": {"size": 11, "color": b_color},
+            "connectgaps": False,
+        },
+    ]
+    gap_layout = {
+        "title": "Gap to Leader by Stage",
+        "xaxis": {"title": "", **common_axis},
+        "yaxis": {"title": "Gap (seconds)", "rangemode": "tozero", **common_axis},
+        "hovermode": "x unified",
+        "legend": {"orientation": "h", "y": -0.15},
+        "margin": {"l": 60, "r": 20, "t": 50, "b": 60},
+        "paper_bgcolor": "white", "plot_bgcolor": "white",
+    }
+    return pos_traces, pos_layout, gap_traces, gap_layout

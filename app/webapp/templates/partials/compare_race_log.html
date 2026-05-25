@@ -73,7 +73,7 @@
               {% endif %}
               {% if show_pack %}{{ pack_chip(r.swim_pack_a, r.swim_pack_size_a, r.bike_pack_a, r.bike_pack_size_a) }}{% endif %}
             </td>
-            <td class="col-race">{{ r.event_name }}</td>
+            <td class="col-race"><a href="/compare/race/{{ r.event_id }}/{{ r.prog_id }}?a={{ a.slug }}&b={{ b.slug }}" class="race-link">{{ r.event_name }}</a></td>
             <td class="col-b">
               {% if b_val is not none %}
                 {% if faster_b %}<span class="faster-time">{{ format_segment_time(b_val) }}</span>{% else %}{{ format_segment_time(b_val) }}{% endif %}
