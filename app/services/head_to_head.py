@@ -155,6 +155,15 @@ class RaceLogRow:
     total_b_sec: float | None
     gap_sec: float | None  # total_a - total_b (None if either DNF)
     winner: str | None     # 'a' | 'b' | None (finisher beats DNF; both-DNF = None)
+    # Pack membership (1-indexed for display; None when no wtcs_pack_membership row)
+    swim_pack_a: int | None = None
+    swim_pack_size_a: int | None = None
+    bike_pack_a: int | None = None
+    bike_pack_size_a: int | None = None
+    swim_pack_b: int | None = None
+    swim_pack_size_b: int | None = None
+    bike_pack_b: int | None = None
+    bike_pack_size_b: int | None = None
 
 
 @dataclass
@@ -167,11 +176,16 @@ class SubsetRecord:
 
 
 @dataclass
+class ContextSection:
+    title: str
+    rows: list[SubsetRecord]
+    note: str | None = None
+
+
+@dataclass
 class ContextH2H:
-    """Environmental / contextual H2H breakdowns."""
-    wetsuit: SubsetRecord
-    non_wetsuit: SubsetRecord
-    unknown_wetsuit_matches: int
+    """Environmental / contextual H2H breakdowns, organized into sections."""
+    sections: list[ContextSection]
 
 
 @dataclass
@@ -640,6 +654,69 @@ def _build_transitions(shared: pd.DataFrame) -> TransitionH2H:
 _WETSUIT_LEGAL = {"mandatory", "allowed", "true", "yes", "y", "1"}
 _WETSUIT_FORBIDDEN = {"forbidden", "false", "no", "n", "0"}
 
+# WBGT threshold for World Triathlon hot-weather protocol
+HOT_WBGT_C = 28.0
+# Wind threshold (km/h) where bike tactics shift noticeably
+WINDY_KMH = 20.0
+
+# Continent bucketing for the common triathlon-hosting countries.
+# Anything not listed falls into "Other".
+_COUNTRY_TO_CONTINENT: dict[str, str] = {
+    # Europe
+    "great britain": "Europe", "united kingdom": "Europe", "france": "Europe",
+    "spain": "Europe", "germany": "Europe", "italy": "Europe",
+    "netherlands": "Europe", "portugal": "Europe", "switzerland": "Europe",
+    "austria": "Europe", "hungary": "Europe", "czech republic": "Europe",
+    "czechia": "Europe", "slovakia": "Europe", "poland": "Europe",
+    "belgium": "Europe", "sweden": "Europe", "norway": "Europe",
+    "denmark": "Europe", "finland": "Europe", "estonia": "Europe",
+    "ireland": "Europe", "greece": "Europe", "croatia": "Europe",
+    "slovenia": "Europe", "russia": "Europe", "türkiye": "Europe",
+    "turkey": "Europe", "romania": "Europe", "bulgaria": "Europe",
+    "ukraine": "Europe", "luxembourg": "Europe", "monaco": "Europe",
+    "andorra": "Europe", "lithuania": "Europe", "latvia": "Europe",
+    "iceland": "Europe", "serbia": "Europe",
+    # Americas
+    "united states": "Americas", "usa": "Americas", "canada": "Americas",
+    "mexico": "Americas", "brazil": "Americas", "argentina": "Americas",
+    "chile": "Americas", "colombia": "Americas", "peru": "Americas",
+    "venezuela": "Americas", "bermuda": "Americas", "uruguay": "Americas",
+    "ecuador": "Americas", "bolivia": "Americas", "paraguay": "Americas",
+    "panama": "Americas", "costa rica": "Americas", "guatemala": "Americas",
+    "barbados": "Americas", "trinidad and tobago": "Americas",
+    "dominican republic": "Americas", "el salvador": "Americas",
+    "honduras": "Americas", "nicaragua": "Americas", "jamaica": "Americas",
+    "puerto rico": "Americas",
+    # Asia-Oceania
+    "japan": "Asia-Oceania", "china": "Asia-Oceania", "south korea": "Asia-Oceania",
+    "korea": "Asia-Oceania", "republic of korea": "Asia-Oceania",
+    "australia": "Asia-Oceania", "new zealand": "Asia-Oceania",
+    "india": "Asia-Oceania", "thailand": "Asia-Oceania",
+    "singapore": "Asia-Oceania", "hong kong": "Asia-Oceania",
+    "indonesia": "Asia-Oceania", "philippines": "Asia-Oceania",
+    "vietnam": "Asia-Oceania", "taiwan": "Asia-Oceania", "malaysia": "Asia-Oceania",
+    "kazakhstan": "Asia-Oceania", "uzbekistan": "Asia-Oceania",
+    "saudi arabia": "Asia-Oceania", "united arab emirates": "Asia-Oceania",
+    "qatar": "Asia-Oceania", "bahrain": "Asia-Oceania", "oman": "Asia-Oceania",
+    "jordan": "Asia-Oceania", "lebanon": "Asia-Oceania", "israel": "Asia-Oceania",
+    "fiji": "Asia-Oceania", "samoa": "Asia-Oceania", "tonga": "Asia-Oceania",
+    "papua new guinea": "Asia-Oceania",
+    # Africa
+    "south africa": "Africa", "egypt": "Africa", "morocco": "Africa",
+    "tunisia": "Africa", "kenya": "Africa", "mauritius": "Africa",
+    "algeria": "Africa", "namibia": "Africa", "rwanda": "Africa",
+    "uganda": "Africa", "zimbabwe": "Africa", "senegal": "Africa",
+    "nigeria": "Africa", "ghana": "Africa", "ethiopia": "Africa",
+    "botswana": "Africa", "zambia": "Africa",
+}
+
+
+def _country_to_continent(country: object) -> str:
+    if not country:
+        return "Other"
+    key = str(country).strip().lower()
+    return _COUNTRY_TO_CONTINENT.get(key, "Other")
+
 
 def _classify_wetsuit(value: object) -> bool | None:
     """Classify a row's wetsuit column. True=wetsuit-legal, False=non-wetsuit, None=unknown."""
@@ -653,6 +730,18 @@ def _classify_wetsuit(value: object) -> bool | None:
     if v in _WETSUIT_FORBIDDEN:
         return False
     return None
+
+
+def _to_float(v: object) -> float | None:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    try:
+        f = float(str(v).strip())
+        if f != f:  # NaN check
+            return None
+        return f
+    except (ValueError, TypeError):
+        return None
 
 
 def _subset_record(df: pd.DataFrame, label: str) -> SubsetRecord:
@@ -681,22 +770,96 @@ def _subset_record(df: pd.DataFrame, label: str) -> SubsetRecord:
     return SubsetRecord(label=label, matches=len(df), wins_a=wa, wins_b=wb)
 
 
-def _build_context(shared: pd.DataFrame) -> ContextH2H:
-    if shared.empty or "wetsuit" not in shared.columns:
-        return ContextH2H(
-            wetsuit=SubsetRecord("Wetsuit", 0, 0, 0),
-            non_wetsuit=SubsetRecord("Non-Wetsuit", 0, 0, 0),
-            unknown_wetsuit_matches=0,
-        )
+def _ctx_section_distance(shared: pd.DataFrame) -> ContextSection | None:
+    if "prog_distance_category" not in shared.columns:
+        return None
+    distances = [str(v) for v in shared["prog_distance_category"].dropna().unique() if str(v).strip()]
+    rows = []
+    from app.utils.timefmt import distance_label, distance_sort_key
+    for d in sorted(distances, key=distance_sort_key):
+        subset = shared[shared["prog_distance_category"] == d]
+        rec = _subset_record(subset, distance_label(d))
+        if rec.matches:
+            rows.append(rec)
+    if not rows:
+        return None
+    return ContextSection(title="By Distance", rows=rows)
+
+
+def _ctx_section_wetsuit(shared: pd.DataFrame) -> ContextSection | None:
+    if "wetsuit" not in shared.columns:
+        return None
     classified = shared["wetsuit"].map(_classify_wetsuit)
-    wetsuit_df = shared[classified == True]
-    nonwetsuit_df = shared[classified == False]
-    unknown_count = int((classified.isna()).sum())
-    return ContextH2H(
-        wetsuit=_subset_record(wetsuit_df, "Wetsuit"),
-        non_wetsuit=_subset_record(nonwetsuit_df, "Non-Wetsuit"),
-        unknown_wetsuit_matches=unknown_count,
-    )
+    wet = _subset_record(shared[classified == True], "Wetsuit swims")
+    non = _subset_record(shared[classified == False], "Non-wetsuit swims")
+    if wet.matches + non.matches == 0:
+        return None
+    rows = [r for r in (wet, non) if r.matches]
+    unknown = int((classified.isna()).sum())
+    note = None
+    if unknown:
+        note = f"{unknown} race{'s' if unknown != 1 else ''} with unknown wetsuit status (older events missing the flag)."
+    return ContextSection(title="By Wetsuit", rows=rows, note=note)
+
+
+def _ctx_section_conditions(shared: pd.DataFrame) -> ContextSection | None:
+    """Hot/cool (WBGT) and windy/calm (wind_speed_kmh) breakdowns."""
+    rows: list[SubsetRecord] = []
+    if "wbgt" in shared.columns:
+        wbgt = shared["wbgt"].map(_to_float)
+        hot = _subset_record(shared[wbgt >= HOT_WBGT_C], f"Hot (WBGT ≥ {HOT_WBGT_C:.0f}°C)")
+        cool = _subset_record(shared[(wbgt.notna()) & (wbgt < HOT_WBGT_C)], f"Cool (WBGT < {HOT_WBGT_C:.0f}°C)")
+        if hot.matches:
+            rows.append(hot)
+        if cool.matches:
+            rows.append(cool)
+    if "wind_speed_kmh" in shared.columns:
+        wind = shared["wind_speed_kmh"].map(_to_float)
+        windy = _subset_record(shared[wind >= WINDY_KMH], f"Windy (≥ {WINDY_KMH:.0f} km/h)")
+        calm = _subset_record(shared[(wind.notna()) & (wind < WINDY_KMH)], f"Calm (< {WINDY_KMH:.0f} km/h)")
+        if windy.matches:
+            rows.append(windy)
+        if calm.matches:
+            rows.append(calm)
+    if not rows:
+        return None
+    return ContextSection(title="By Conditions", rows=rows)
+
+
+def _ctx_section_continent(shared: pd.DataFrame) -> ContextSection | None:
+    if "event_country" not in shared.columns:
+        return None
+    continents = shared["event_country"].map(_country_to_continent)
+    seen = []
+    rows = []
+    # Stable display order
+    for cont in ["Europe", "Americas", "Asia-Oceania", "Africa", "Other"]:
+        subset = shared[continents == cont]
+        if subset.empty:
+            continue
+        rec = _subset_record(subset, cont)
+        if rec.matches:
+            rows.append(rec)
+            seen.append(cont)
+    if not rows:
+        return None
+    return ContextSection(title="By Continent", rows=rows)
+
+
+def _build_context(shared: pd.DataFrame) -> ContextH2H:
+    if shared.empty:
+        return ContextH2H(sections=[])
+    sections: list[ContextSection] = []
+    for builder in (
+        _ctx_section_distance,
+        _ctx_section_wetsuit,
+        _ctx_section_conditions,
+        _ctx_section_continent,
+    ):
+        s = builder(shared)
+        if s is not None:
+            sections.append(s)
+    return ContextH2H(sections=sections)
 
 
 def _build_race_log(shared: pd.DataFrame) -> list[RaceLogRow]:
@@ -769,6 +932,37 @@ def _build_race_log(shared: pd.DataFrame) -> list[RaceLogRow]:
     return rows
 
 
+def _enrich_race_log_with_pack(
+    rows: list[RaceLogRow],
+    pack_df: pd.DataFrame,
+    a_id: int,
+    b_id: int,
+) -> list[RaceLogRow]:
+    """Attach swim/bike pack membership to each race row.
+
+    Pack IDs in wtcs_pack_membership are 0-indexed (0 = lead pack); we
+    store them 1-indexed for display (Pack 1 = lead pack).
+    """
+    if pack_df.empty or not rows:
+        return rows
+    # Build lookup keyed on (event_id, prog_id, athlete_id, checkpoint)
+    lookup: dict[tuple[int, int, int, str], tuple[int, int]] = {}
+    for _, r in pack_df.iterrows():
+        key = (int(r["event_id"]), int(r["prog_id"]), int(r["athlete_id"]), str(r["checkpoint"]))
+        lookup[key] = (int(r["pack_id"]) + 1, int(r["pack_size"]))   # +1 for 1-indexed display
+    for row in rows:
+        for athlete_id, suffix in ((a_id, "a"), (b_id, "b")):
+            sw = lookup.get((row.event_id, row.prog_id, int(athlete_id), "swim"))
+            bk = lookup.get((row.event_id, row.prog_id, int(athlete_id), "bike"))
+            if sw:
+                setattr(row, f"swim_pack_{suffix}", sw[0])
+                setattr(row, f"swim_pack_size_{suffix}", sw[1])
+            if bk:
+                setattr(row, f"bike_pack_{suffix}", bk[0])
+                setattr(row, f"bike_pack_size_{suffix}", bk[1])
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Top-level entry point
 # ---------------------------------------------------------------------------
@@ -837,11 +1031,7 @@ def build_compare_bundle(
             pack_profile=[_empty_pack_profile(int(a_id)), _empty_pack_profile(int(b_id))],
             transitions=TransitionH2H(0, 0, 0, 0, 0, 0, None, None, None, None, None, None),
             race_log=[],
-            context=ContextH2H(
-                wetsuit=SubsetRecord("Wetsuit", 0, 0, 0),
-                non_wetsuit=SubsetRecord("Non-Wetsuit", 0, 0, 0),
-                unknown_wetsuit_matches=0,
-            ),
+            context=ContextH2H(sections=[]),
             has_any_shared=False,
         )
         if use_cache:
@@ -864,7 +1054,7 @@ def build_compare_bundle(
             _build_pack_profile(int(b_id), pack_all),
         ],
         transitions=_build_transitions(shared),
-        race_log=_build_race_log(shared),
+        race_log=_enrich_race_log_with_pack(_build_race_log(shared), pack_all, int(a_id), int(b_id)),
         context=_build_context(shared),
         has_any_shared=True,
     )
@@ -926,23 +1116,28 @@ def _swap_bundle(bundle: CompareBundle) -> CompareBundle:
             total_a_sec=r.total_b_sec, total_b_sec=r.total_a_sec,
             gap_sec=(-r.gap_sec if r.gap_sec is not None else None),
             winner=("b" if r.winner == "a" else ("a" if r.winner == "b" else None)),
+            swim_pack_a=r.swim_pack_b, swim_pack_size_a=r.swim_pack_size_b,
+            bike_pack_a=r.bike_pack_b, bike_pack_size_a=r.bike_pack_size_b,
+            swim_pack_b=r.swim_pack_a, swim_pack_size_b=r.swim_pack_size_a,
+            bike_pack_b=r.bike_pack_a, bike_pack_size_b=r.bike_pack_size_a,
         )
         for r in bundle.race_log
     ]
     ctx = bundle.context
     ctx_swapped = None
     if ctx is not None:
-        ctx_swapped = ContextH2H(
-            wetsuit=SubsetRecord(
-                label=ctx.wetsuit.label, matches=ctx.wetsuit.matches,
-                wins_a=ctx.wetsuit.wins_b, wins_b=ctx.wetsuit.wins_a,
-            ),
-            non_wetsuit=SubsetRecord(
-                label=ctx.non_wetsuit.label, matches=ctx.non_wetsuit.matches,
-                wins_a=ctx.non_wetsuit.wins_b, wins_b=ctx.non_wetsuit.wins_a,
-            ),
-            unknown_wetsuit_matches=ctx.unknown_wetsuit_matches,
-        )
+        ctx_swapped = ContextH2H(sections=[
+            ContextSection(
+                title=s.title,
+                note=s.note,
+                rows=[
+                    SubsetRecord(label=r.label, matches=r.matches,
+                                 wins_a=r.wins_b, wins_b=r.wins_a)
+                    for r in s.rows
+                ],
+            )
+            for s in ctx.sections
+        ])
     return CompareBundle(
         athlete_a=bundle.athlete_b,
         athlete_b=bundle.athlete_a,

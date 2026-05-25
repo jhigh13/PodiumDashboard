@@ -2,15 +2,16 @@
 {% set b = bundle.athlete_b %}
 {% set ctx = bundle.context %}
 
-{% macro ctx_row(label, subset) %}
+{% macro ctx_row(subset) %}
   {% set total = subset.wins_a + subset.wins_b %}
   {% set pct_a = (100 * subset.wins_a / total) if total else 0 %}
   {% set pct_b = (100 * subset.wins_b / total) if total else 0 %}
-  <div style="display: grid; grid-template-columns: 160px 50px 1fr 50px; gap: 12px; align-items: center; margin: 10px 0;">
-    <div style="font-weight: 650; font-size: 13px;">{{ label }}
-      <span class="muted" style="font-weight: 500; font-size: 11px;">&nbsp;({{ subset.matches }} race{{ '' if subset.matches == 1 else 's' }})</span>
+  <div style="display: grid; grid-template-columns: 200px 50px 1fr 50px; gap: 12px; align-items: center; margin: 8px 0;">
+    <div style="font-size: 13px;">
+      <span style="font-weight: 650;">{{ subset.label }}</span>
+      <span class="muted" style="font-weight: 500; font-size: 11px;">&nbsp;({{ subset.matches }})</span>
     </div>
-    <div style="text-align: right; font-weight: 800; font-size: 18px; color: #4f46e5;">{{ subset.wins_a }}</div>
+    <div style="text-align: right; font-weight: 800; font-size: 16px; color: #4f46e5;">{{ subset.wins_a }}</div>
     <div>
       {% if total %}
         <div class="htw-bar">
@@ -18,28 +19,30 @@
           <div class="fill-b" style="width: {{ pct_b }}%;"></div>
         </div>
       {% else %}
-        <div class="muted" style="text-align: center; font-size: 12px;">No shared {{ label.lower() }} races</div>
+        <div class="muted" style="text-align: center; font-size: 12px;">No win awarded (both DNF)</div>
       {% endif %}
     </div>
-    <div style="text-align: left; font-weight: 800; font-size: 18px; color: #15803d;">{{ subset.wins_b }}</div>
+    <div style="text-align: left; font-weight: 800; font-size: 16px; color: #15803d;">{{ subset.wins_b }}</div>
   </div>
 {% endmacro %}
 
 <div class="card">
   <h3 class="section-title">CONTEXT &amp; CONDITIONS</h3>
-  {% if ctx is none or (ctx.wetsuit.matches + ctx.non_wetsuit.matches) == 0 %}
+  {% if not ctx or not ctx.sections %}
     <p class="muted" style="text-align: center; padding: 16px;">No condition-tagged shared races yet.</p>
   {% else %}
     <div style="display:flex; justify-content: space-between; margin-bottom: 4px; font-size: 12px;">
       <div class="athlete-name-a">{{ a.full_name }}</div>
       <div class="athlete-name-b">{{ b.full_name }}</div>
     </div>
-    {{ ctx_row('Wetsuit swims', ctx.wetsuit) }}
-    {{ ctx_row('Non-wetsuit swims', ctx.non_wetsuit) }}
-    {% if ctx.unknown_wetsuit_matches %}
-      <p class="muted" style="font-size: 11px; text-align: center; margin-top: 8px;">
-        ({{ ctx.unknown_wetsuit_matches }} race{{ '' if ctx.unknown_wetsuit_matches == 1 else 's' }} with unknown wetsuit status &mdash; older events missing the flag.)
-      </p>
-    {% endif %}
+    {% for section in ctx.sections %}
+      <div style="margin-top: 14px;">
+        <h4 style="margin: 0 0 4px; color: var(--link); font-size: 13px; letter-spacing: 0.05em;">{{ section.title }}</h4>
+        {% for row in section.rows %}{{ ctx_row(row) }}{% endfor %}
+        {% if section.note %}
+          <p class="muted" style="font-size: 11px; text-align: center; margin: 4px 0 0;">{{ section.note }}</p>
+        {% endif %}
+      </div>
+    {% endfor %}
   {% endif %}
 </div>

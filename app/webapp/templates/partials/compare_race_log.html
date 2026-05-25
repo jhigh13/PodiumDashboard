@@ -23,7 +23,28 @@
   </div>
 {% endmacro %}
 
-{% macro seg_section(label, a_attr, b_attr, wins_a, wins_b, show_pos=False) %}
+{% macro pack_chip(swim_pack, swim_size, bike_pack, bike_size) %}
+  {% if swim_pack or bike_pack %}
+    <div class="pack-chip">
+      {% if swim_pack and bike_pack %}
+        Pack <strong>{{ swim_pack }}</strong>
+        {% if swim_size %}<span class="muted">({{ swim_size }})</span>{% endif %}
+        &rarr;
+        <strong>{{ bike_pack }}</strong>
+        {% if bike_size %}<span class="muted">({{ bike_size }})</span>{% endif %}
+        {% if bike_pack < swim_pack %}<span class="pack-up">&uarr; {{ swim_pack - bike_pack }}</span>
+        {% elif bike_pack > swim_pack %}<span class="pack-down">&darr; {{ bike_pack - swim_pack }}</span>
+        {% endif %}
+      {% elif swim_pack %}
+        Pack <strong>{{ swim_pack }}</strong>{% if swim_size %}<span class="muted">({{ swim_size }})</span>{% endif %} <span class="muted">&rarr; &mdash;</span>
+      {% elif bike_pack %}
+        <span class="muted">&mdash; &rarr;</span> Pack <strong>{{ bike_pack }}</strong>{% if bike_size %}<span class="muted">({{ bike_size }})</span>{% endif %}
+      {% endif %}
+    </div>
+  {% endif %}
+{% endmacro %}
+
+{% macro seg_section(label, a_attr, b_attr, wins_a, wins_b, show_pos=False, show_pack=False) %}
   <div class="seg-section">
     <div class="seg-section-header">
       <h4>{{ label }}</h4>
@@ -50,6 +71,7 @@
               {% else %}
                 <span class="muted">&mdash;</span>
               {% endif %}
+              {% if show_pack %}{{ pack_chip(r.swim_pack_a, r.swim_pack_size_a, r.bike_pack_a, r.bike_pack_size_a) }}{% endif %}
             </td>
             <td class="col-race">{{ r.event_name }}</td>
             <td class="col-b">
@@ -64,6 +86,7 @@
               {% if show_pos %}
                 &nbsp;{% if r.pos_b %}<span class="pos">{{ r.pos_b }}</span>{% elif r.finish_status_b and r.finish_status_b not in ['FINISH','FINISHED','OK','OFFICIAL'] %}<span class="badge red">{{ r.finish_status_b }}</span>{% endif %}
               {% endif %}
+              {% if show_pack %}{{ pack_chip(r.swim_pack_b, r.swim_pack_size_b, r.bike_pack_b, r.bike_pack_size_b) }}{% endif %}
             </td>
           </tr>
         {% endfor %}
@@ -80,7 +103,7 @@
     {{ seg_section('Overall Results', 'total_a_sec', 'total_b_sec', rec.wins_a, rec.wins_b, show_pos=True) }}
     {{ seg_section('Swim', 'swim_a_sec', 'swim_b_sec', htw.swim_wins_a, htw.swim_wins_b) }}
     {{ seg_section('T1', 't1_a_sec', 't1_b_sec', trans.t1_wins_a, trans.t1_wins_b) }}
-    {{ seg_section('Bike', 'bike_a_sec', 'bike_b_sec', htw.bike_wins_a, htw.bike_wins_b) }}
+    {{ seg_section('Bike', 'bike_a_sec', 'bike_b_sec', htw.bike_wins_a, htw.bike_wins_b, show_pack=True) }}
     {{ seg_section('T2', 't2_a_sec', 't2_b_sec', trans.t2_wins_a, trans.t2_wins_b) }}
     {{ seg_section('Run', 'run_a_sec', 'run_b_sec', htw.run_wins_a, htw.run_wins_b) }}
   {% endif %}
