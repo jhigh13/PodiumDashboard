@@ -36,12 +36,25 @@ def _resolve_pair(a: str | int | None, b: str | int | None) -> tuple[Optional[At
     return resolve_athlete(a), resolve_athlete(b)
 
 
-def _get_bundle_or_none(a: int, b: int) -> CompareBundle | None:
+# Date-range filter mapping: URL param -> years_back integer
+_SINCE_OPTIONS: dict[str, int | None] = {
+    "": None, "all": None,
+    "1y": 1, "2y": 2, "3y": 3, "4y": 4, "5y": 5,
+}
+
+
+def _parse_since(since: str | None) -> int | None:
+    if since is None:
+        return None
+    return _SINCE_OPTIONS.get(since.strip().lower(), None)
+
+
+def _get_bundle_or_none(a: int, b: int, since: str | None = None) -> CompareBundle | None:
     engine = get_triathlon_engine()
     if engine is None:
         return None
     try:
-        return build_compare_bundle(int(a), int(b), engine=engine)
+        return build_compare_bundle(int(a), int(b), engine=engine, years_back=_parse_since(since))
     except ValueError:
         return None
 
@@ -70,6 +83,7 @@ def register_compare_routes(app: FastAPI, templates: Jinja2Templates) -> None:
         b: str | None = None,
         a_slug: str | None = None,
         b_slug: str | None = None,
+        since: str | None = None,
     ):
         # Picker submits BOTH the typed text (a, b) and the hidden slug
         # (a_slug, b_slug). Prefer the slug — it's what the user actually
@@ -79,6 +93,10 @@ def register_compare_routes(app: FastAPI, templates: Jinja2Templates) -> None:
         b_value = (b_slug or b or "").strip() or None
         athlete_a, athlete_b = _resolve_pair(a_value, b_value)
         no_db = get_triathlon_engine() is None
+        # Normalize since to a known value or empty
+        since_norm = (since or "").strip().lower()
+        if since_norm not in _SINCE_OPTIONS:
+            since_norm = ""
         return templates.TemplateResponse(
             "compare.html",
             {
@@ -88,6 +106,7 @@ def register_compare_routes(app: FastAPI, templates: Jinja2Templates) -> None:
                 "athlete_b": athlete_b,
                 "a_param": a_value or "",
                 "b_param": b_value or "",
+                "since": since_norm,
                 "no_db": no_db,
             },
         )
@@ -111,8 +130,8 @@ def register_compare_routes(app: FastAPI, templates: Jinja2Templates) -> None:
         )
 
     @app.get("/partials/compare/h2h", response_class=HTMLResponse)
-    def partial_h2h(request: Request, a: int, b: int):
-        bundle = _get_bundle_or_none(a, b)
+    def partial_h2h(request: Request, a: int, b: int, since: str | None = None):
+        bundle = _get_bundle_or_none(a, b, since=since)
         if bundle is None:
             return HTMLResponse(_error_card("Could not load comparison."), headers=CACHE_HEADERS)
         return templates.TemplateResponse(
@@ -122,8 +141,8 @@ def register_compare_routes(app: FastAPI, templates: Jinja2Templates) -> None:
         )
 
     @app.get("/partials/compare/how_they_win", response_class=HTMLResponse)
-    def partial_how_they_win(request: Request, a: int, b: int):
-        bundle = _get_bundle_or_none(a, b)
+    def partial_how_they_win(request: Request, a: int, b: int, since: str | None = None):
+        bundle = _get_bundle_or_none(a, b, since=since)
         if bundle is None:
             return HTMLResponse(_error_card("Could not load segment wins."), headers=CACHE_HEADERS)
         return templates.TemplateResponse(
@@ -133,8 +152,8 @@ def register_compare_routes(app: FastAPI, templates: Jinja2Templates) -> None:
         )
 
     @app.get("/partials/compare/avg_splits", response_class=HTMLResponse)
-    def partial_avg_splits(request: Request, a: int, b: int):
-        bundle = _get_bundle_or_none(a, b)
+    def partial_avg_splits(request: Request, a: int, b: int, since: str | None = None):
+        bundle = _get_bundle_or_none(a, b, since=since)
         if bundle is None:
             return HTMLResponse(_error_card("Could not load splits."), headers=CACHE_HEADERS)
         return templates.TemplateResponse(
@@ -144,8 +163,8 @@ def register_compare_routes(app: FastAPI, templates: Jinja2Templates) -> None:
         )
 
     @app.get("/partials/compare/pack_profile", response_class=HTMLResponse)
-    def partial_pack_profile(request: Request, a: int, b: int):
-        bundle = _get_bundle_or_none(a, b)
+    def partial_pack_profile(request: Request, a: int, b: int, since: str | None = None):
+        bundle = _get_bundle_or_none(a, b, since=since)
         if bundle is None:
             return HTMLResponse(_error_card("Could not load pack profile."), headers=CACHE_HEADERS)
         return templates.TemplateResponse(
@@ -155,8 +174,8 @@ def register_compare_routes(app: FastAPI, templates: Jinja2Templates) -> None:
         )
 
     @app.get("/partials/compare/transitions", response_class=HTMLResponse)
-    def partial_transitions(request: Request, a: int, b: int):
-        bundle = _get_bundle_or_none(a, b)
+    def partial_transitions(request: Request, a: int, b: int, since: str | None = None):
+        bundle = _get_bundle_or_none(a, b, since=since)
         if bundle is None:
             return HTMLResponse(_error_card("Could not load transitions."), headers=CACHE_HEADERS)
         return templates.TemplateResponse(
@@ -166,8 +185,8 @@ def register_compare_routes(app: FastAPI, templates: Jinja2Templates) -> None:
         )
 
     @app.get("/partials/compare/race_log", response_class=HTMLResponse)
-    def partial_race_log(request: Request, a: int, b: int):
-        bundle = _get_bundle_or_none(a, b)
+    def partial_race_log(request: Request, a: int, b: int, since: str | None = None):
+        bundle = _get_bundle_or_none(a, b, since=since)
         if bundle is None:
             return HTMLResponse(_error_card("Could not load race log."), headers=CACHE_HEADERS)
         return templates.TemplateResponse(
@@ -177,8 +196,8 @@ def register_compare_routes(app: FastAPI, templates: Jinja2Templates) -> None:
         )
 
     @app.get("/partials/compare/context", response_class=HTMLResponse)
-    def partial_context(request: Request, a: int, b: int):
-        bundle = _get_bundle_or_none(a, b)
+    def partial_context(request: Request, a: int, b: int, since: str | None = None):
+        bundle = _get_bundle_or_none(a, b, since=since)
         if bundle is None:
             return HTMLResponse(_error_card("Could not load context."), headers=CACHE_HEADERS)
         return templates.TemplateResponse(

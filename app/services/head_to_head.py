@@ -344,6 +344,7 @@ def _shared_races_df(
     *,
     include_mixed_relay: bool = False,
     include_para: bool = False,
+    years_back: int | None = None,
 ) -> pd.DataFrame:
     a = _coerce_seconds_columns(races_a.copy())
     b = _coerce_seconds_columns(races_b.copy())
@@ -373,6 +374,10 @@ def _shared_races_df(
     if not include_para and "is_para" in merged.columns:
         is_para = merged["is_para"].map(lambda v: bool(v) if pd.notna(v) else False)
         merged = merged[~is_para]
+    if years_back is not None and "event_date" in merged.columns:
+        cutoff = date.today().replace(year=date.today().year - int(years_back))
+        ed = pd.to_datetime(merged["event_date"], errors="coerce")
+        merged = merged[ed.dt.date >= cutoff]
     return merged.reset_index(drop=True)
 
 
@@ -968,12 +973,12 @@ def _enrich_race_log_with_pack(
 # ---------------------------------------------------------------------------
 
 
-_BUNDLE_CACHE: dict[tuple[int, int], tuple[float, CompareBundle]] = {}
+_BUNDLE_CACHE: dict[tuple[int, int, int | None], tuple[float, CompareBundle]] = {}
 _CACHE_TTL_SEC = 3600
 _CACHE_MAX = 256
 
 
-def _cache_get(key: tuple[int, int]) -> CompareBundle | None:
+def _cache_get(key: tuple[int, int, int | None]) -> CompareBundle | None:
     entry = _BUNDLE_CACHE.get(key)
     if not entry:
         return None
@@ -984,7 +989,7 @@ def _cache_get(key: tuple[int, int]) -> CompareBundle | None:
     return bundle
 
 
-def _cache_put(key: tuple[int, int], bundle: CompareBundle) -> None:
+def _cache_put(key: tuple[int, int, int | None], bundle: CompareBundle) -> None:
     if len(_BUNDLE_CACHE) >= _CACHE_MAX:
         # Drop oldest
         oldest_key = min(_BUNDLE_CACHE, key=lambda k: _BUNDLE_CACHE[k][0])
@@ -998,11 +1003,19 @@ def build_compare_bundle(
     *,
     engine: Engine,
     use_cache: bool = True,
+    years_back: int | None = None,
 ) -> CompareBundle:
-    """Top-level: fetch + assemble all cards for the (a, b) athlete pair."""
+    """Top-level: fetch + assemble all cards for the (a, b) athlete pair.
+
+    ``years_back`` filters all shared races and split averages to the
+    last N years. If None, shared races are unfiltered (all-time) and
+    split averages default to a 4-year window.
+    """
     if a_id == b_id:
         raise ValueError("Athletes must be different")
-    key = tuple(sorted((int(a_id), int(b_id))))
+    sorted_ids = tuple(sorted((int(a_id), int(b_id))))
+    yb = int(years_back) if years_back is not None else None
+    key = (sorted_ids[0], sorted_ids[1], yb)
     cached = _cache_get(key) if use_cache else None
     if cached:
         # Cache stores in sorted order. If caller asked in reverse, swap.
@@ -1019,7 +1032,8 @@ def build_compare_bundle(
 
     races_a = fetch_athlete_races(a_id, engine=engine)
     races_b = fetch_athlete_races(b_id, engine=engine)
-    shared = _shared_races_df(races_a, races_b)
+    shared = _shared_races_df(races_a, races_b, years_back=yb)
+    split_years = yb if yb is not None else 4
 
     if shared.empty:
         bundle = CompareBundle(
@@ -1027,7 +1041,7 @@ def build_compare_bundle(
             athlete_b=AthleteRef.from_entry(b_entry),
             record=H2HRecord(0, 0, 0, 0, None, None, None, None, None),
             how_they_win=HowTheyWin(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
-            split_averages=_build_split_averages(races_a, races_b),
+            split_averages=_build_split_averages(races_a, races_b, years_back=split_years),
             pack_profile=[_empty_pack_profile(int(a_id)), _empty_pack_profile(int(b_id))],
             transitions=TransitionH2H(0, 0, 0, 0, 0, 0, None, None, None, None, None, None),
             race_log=[],
@@ -1035,7 +1049,7 @@ def build_compare_bundle(
             has_any_shared=False,
         )
         if use_cache:
-            _cache_put(key, _swap_to_sorted(bundle, key))
+            _cache_put(key, _swap_to_sorted(bundle, sorted_ids))
         return bundle
 
     keys = list({(int(e), int(p)) for e, p in zip(shared["event_id"], shared["prog_id"])})
@@ -1048,7 +1062,7 @@ def build_compare_bundle(
         athlete_b=AthleteRef.from_entry(b_entry),
         record=_build_record(shared),
         how_they_win=_build_how_they_win(shared),
-        split_averages=_build_split_averages(races_a, races_b),
+        split_averages=_build_split_averages(races_a, races_b, years_back=split_years),
         pack_profile=[
             _build_pack_profile(int(a_id), pack_all),
             _build_pack_profile(int(b_id), pack_all),
@@ -1059,7 +1073,7 @@ def build_compare_bundle(
         has_any_shared=True,
     )
     if use_cache:
-        _cache_put(key, _swap_to_sorted(bundle, key))
+        _cache_put(key, _swap_to_sorted(bundle, sorted_ids))
     return bundle
 
 
