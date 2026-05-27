@@ -71,49 +71,85 @@
     </label>
     <button type="submit" class="btn" style="padding: 10px 36px; font-weight: 650;">Compare</button>
   </div>
+
+  {% set filter_count = (cats|length) + (dists|length) %}
+  <details style="margin-top: 12px;" {% if filter_count %}open{% endif %}>
+    <summary style="cursor: pointer; font-size: 13px; font-weight: 650; color: var(--muted); text-align: center;">
+      Filters{% if filter_count %} <span class="badge blue" style="font-size: 11px;">{{ filter_count }} active</span>{% else %} <span class="muted" style="font-weight: 500; font-size: 12px;">(none — showing all)</span>{% endif %}
+    </summary>
+    <div style="margin-top: 12px;">
+      <div style="margin-bottom: 8px;">
+        <span style="font-size: 12px; font-weight: 650; color: var(--muted); margin-right: 12px;">Race category:</span>
+        {% for key, label in category_options %}
+          <label class="filter-pill">
+            <input type="checkbox" name="cats" value="{{ key }}" {% if key in cats %}checked{% endif %}>
+            {{ label }}
+          </label>
+        {% endfor %}
+      </div>
+      <div>
+        <span style="font-size: 12px; font-weight: 650; color: var(--muted); margin-right: 12px;">Distance:</span>
+        {% for key, label in distance_options %}
+          <label class="filter-pill">
+            <input type="checkbox" name="dists" value="{{ key }}" {% if key in dists %}checked{% endif %}>
+            {{ label }}
+          </label>
+        {% endfor %}
+      </div>
+      <p class="muted" style="font-size: 11px; margin: 10px 0 0;">
+        Leave a row empty to include all options for that filter.
+      </p>
+    </div>
+  </details>
 </form>
 
 {% if athlete_a and athlete_b %}
   {% set a_id = athlete_a.athlete_id %}
   {% set b_id = athlete_b.athlete_id %}
-  {% set since_qs = ('&since=' ~ since) if since else '' %}
-  {% if since %}
-    {% set since_label = {'1y':'Last 1 year', '2y':'Last 2 years', '3y':'Last 3 years', '4y':'Last 4 years'}.get(since, since) %}
+  {% set ns = namespace(qs=('&since=' ~ since) if since else '') %}
+  {% for c in cats %}{% set ns.qs = ns.qs ~ '&cats=' ~ c %}{% endfor %}
+  {% for d in dists %}{% set ns.qs = ns.qs ~ '&dists=' ~ d %}{% endfor %}
+  {% set filter_qs = ns.qs %}
+  {% if since or cats or dists %}
+    {% set since_label = {'1y':'Last 1 year', '2y':'Last 2 years', '3y':'Last 3 years', '4y':'Last 4 years'}.get(since, '') %}
     <p class="muted" style="text-align: center; margin: 6px 0 4px; font-size: 12px;">
-      Showing data: <strong>{{ since_label }}</strong>
+      Showing:
+      {% if since_label %}<strong>{{ since_label }}</strong>{% else %}<strong>All time</strong>{% endif %}
+      {% if cats %} &middot; {% for c in cats %}<strong>{{ category_labels[c] }}</strong>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
+      {% if dists %} &middot; {% for d in dists %}<strong>{{ distance_labels[d] }}</strong>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
     </p>
   {% endif %}
   <div class="row" style="margin-top: 4px;">
     <div class="col" style="flex: 1 1 100%;"
-         hx-get="/partials/compare/h2h?a={{ a_id }}&b={{ b_id }}{{ since_qs }}" hx-trigger="load">
+         hx-get="/partials/compare/h2h?a={{ a_id }}&b={{ b_id }}{{ filter_qs }}" hx-trigger="load">
       <div class="card"><p class="muted">Loading head-to-head...</p></div>
     </div>
   </div>
 
   <div class="row">
     <div class="col"
-         hx-get="/partials/compare/how_they_win?a={{ a_id }}&b={{ b_id }}{{ since_qs }}" hx-trigger="load">
+         hx-get="/partials/compare/how_they_win?a={{ a_id }}&b={{ b_id }}{{ filter_qs }}" hx-trigger="load">
       <div class="card"><p class="muted">Loading swim/bike/run head to head...</p></div>
     </div>
     <div class="col"
-         hx-get="/partials/compare/transitions?a={{ a_id }}&b={{ b_id }}{{ since_qs }}" hx-trigger="load">
+         hx-get="/partials/compare/transitions?a={{ a_id }}&b={{ b_id }}{{ filter_qs }}" hx-trigger="load">
       <div class="card"><p class="muted">Loading transitions...</p></div>
     </div>
   </div>
 
-  <div hx-get="/partials/compare/avg_splits?a={{ a_id }}&b={{ b_id }}{{ since_qs }}" hx-trigger="load">
+  <div hx-get="/partials/compare/avg_splits?a={{ a_id }}&b={{ b_id }}{{ filter_qs }}" hx-trigger="load">
     <div class="card"><p class="muted">Loading average splits...</p></div>
   </div>
 
-  <div hx-get="/partials/compare/pack_profile?a={{ a_id }}&b={{ b_id }}{{ since_qs }}" hx-trigger="load">
+  <div hx-get="/partials/compare/pack_profile?a={{ a_id }}&b={{ b_id }}{{ filter_qs }}" hx-trigger="load">
     <div class="card"><p class="muted">Loading pack profile...</p></div>
   </div>
 
-  <div hx-get="/partials/compare/context?a={{ a_id }}&b={{ b_id }}{{ since_qs }}" hx-trigger="load">
+  <div hx-get="/partials/compare/context?a={{ a_id }}&b={{ b_id }}{{ filter_qs }}" hx-trigger="load">
     <div class="card"><p class="muted">Loading context &amp; conditions...</p></div>
   </div>
 
-  <div hx-get="/partials/compare/race_log?a={{ a_id }}&b={{ b_id }}{{ since_qs }}" hx-trigger="load">
+  <div hx-get="/partials/compare/race_log?a={{ a_id }}&b={{ b_id }}{{ filter_qs }}" hx-trigger="load">
     <div class="card"><p class="muted">Loading race-by-race comparison...</p></div>
   </div>
 {% elif a_param or b_param %}
@@ -227,6 +263,18 @@
   .pack-chip .pack-down { color: #dc2626; font-weight: 700; margin-left: 4px; }
   .race-link { color: var(--text); text-decoration: none; border-bottom: 1px dotted var(--border-strong); }
   .race-link:hover { color: var(--link); border-bottom-color: var(--link); }
+  .filter-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; margin: 2px 4px 2px 0;
+    border: 1px solid var(--border-strong); border-radius: 999px;
+    font-size: 12px; font-weight: 600; cursor: pointer;
+    -webkit-user-select: none; user-select: none;
+    background: var(--card);
+  }
+  .filter-pill:has(input:checked) {
+    background: #dbeafe; border-color: #2563eb; color: #1e3a8a;
+  }
+  .filter-pill input { margin: 0; }
 
   .winner-a { background: rgba(99,102,241,0.10); }
   .winner-b { background: rgba(22,163,74,0.10); }

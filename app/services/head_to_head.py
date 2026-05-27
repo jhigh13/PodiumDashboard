@@ -338,6 +338,48 @@ def _finished_mask(df: pd.DataFrame, suffix: str) -> pd.Series:
     return status.isin(_FINISHED_STATUSES)
 
 
+# Race category classification (keep aligned with _ctx_section_distance keys
+# and the UI checkbox values).
+CATEGORY_KEYS: tuple[str, ...] = ("wtcs", "world_cup", "continental", "other")
+CATEGORY_LABELS: dict[str, str] = {
+    "wtcs": "WTCS",
+    "world_cup": "World Cup",
+    "continental": "Continental",
+    "other": "Other",
+}
+
+DISTANCE_KEYS: tuple[str, ...] = (
+    "super_sprint", "sprint", "standard", "middle_distance", "long_distance",
+)
+
+
+def classify_event_category(event_name: object, prog_name: object) -> str:
+    """Bucket an event into one of {wtcs, world_cup, continental, other}.
+
+    Uses the event name (and program name as a fallback) to detect the
+    governing series. Olympics, T100, Super League, regional cups, etc.
+    fall into 'other' — keep the top three buckets clean.
+    """
+    en = (str(event_name or "")).lower()
+    pn = (str(prog_name or "")).lower()
+    blob = f"{en} {pn}"
+    if any(s in blob for s in (
+        "championship series", "championship finals", "grand final", "wtcs",
+    )):
+        return "wtcs"
+    if "world cup" in blob:
+        return "world_cup"
+    if any(s in blob for s in (
+        "continental championship", "continental cup",
+        "patco", "atu", "otu", "astc", "etu", "natu",
+        "americas championship", "asian championship", "african championship",
+        "european championship", "oceania championship", "european cup",
+        "americas triathlon cup", "asia triathlon cup", "africa triathlon cup",
+    )):
+        return "continental"
+    return "other"
+
+
 def _shared_races_df(
     races_a: pd.DataFrame,
     races_b: pd.DataFrame,
@@ -345,6 +387,8 @@ def _shared_races_df(
     include_mixed_relay: bool = False,
     include_para: bool = False,
     years_back: int | None = None,
+    categories: set[str] | None = None,
+    distances: set[str] | None = None,
 ) -> pd.DataFrame:
     a = _coerce_seconds_columns(races_a.copy())
     b = _coerce_seconds_columns(races_b.copy())
@@ -378,6 +422,18 @@ def _shared_races_df(
         cutoff = date.today().replace(year=date.today().year - int(years_back))
         ed = pd.to_datetime(merged["event_date"], errors="coerce")
         merged = merged[ed.dt.date >= cutoff]
+    if categories:
+        cats_norm = {c.strip().lower() for c in categories if c}
+        if cats_norm:
+            cat_series = merged.apply(
+                lambda r: classify_event_category(r.get("event_name"), r.get("prog_name")),
+                axis=1,
+            )
+            merged = merged[cat_series.isin(cats_norm)]
+    if distances:
+        dists_norm = {d.strip().lower() for d in distances if d}
+        if dists_norm and "prog_distance_category" in merged.columns:
+            merged = merged[merged["prog_distance_category"].astype(str).str.lower().isin(dists_norm)]
     return merged.reset_index(drop=True)
 
 
@@ -519,6 +575,8 @@ def _build_split_averages(
     races_b: pd.DataFrame,
     *,
     years_back: int = 4,
+    categories: set[str] | None = None,
+    distances: set[str] | None = None,
 ) -> list[SplitAverages]:
     """Per-distance averages computed independently for each athlete.
 
@@ -528,6 +586,8 @@ def _build_split_averages(
     """
     today = date.today()
     cutoff = today.replace(year=today.year - years_back)
+    cats_norm = {c.strip().lower() for c in categories if c} if categories else None
+    dists_norm = {d.strip().lower() for d in distances if d} if distances else None
 
     def _prep(df: pd.DataFrame) -> pd.DataFrame:
         x = _coerce_seconds_columns(df.copy())
@@ -541,6 +601,14 @@ def _build_split_averages(
         if "is_para" in x.columns:
             is_para = x["is_para"].map(lambda v: bool(v) if pd.notna(v) else False)
             x = x[~is_para]
+        if cats_norm:
+            cat_series = x.apply(
+                lambda r: classify_event_category(r.get("event_name"), r.get("prog_name")),
+                axis=1,
+            )
+            x = x[cat_series.isin(cats_norm)]
+        if dists_norm and "prog_distance_category" in x.columns:
+            x = x[x["prog_distance_category"].astype(str).str.lower().isin(dists_norm)]
         return x
 
     a = _prep(races_a)
@@ -973,12 +1041,13 @@ def _enrich_race_log_with_pack(
 # ---------------------------------------------------------------------------
 
 
-_BUNDLE_CACHE: dict[tuple[int, int, int | None], tuple[float, CompareBundle]] = {}
+_BundleCacheKey = tuple[int, int, int | None, frozenset, frozenset]
+_BUNDLE_CACHE: dict[_BundleCacheKey, tuple[float, CompareBundle]] = {}
 _CACHE_TTL_SEC = 3600
 _CACHE_MAX = 256
 
 
-def _cache_get(key: tuple[int, int, int | None]) -> CompareBundle | None:
+def _cache_get(key: _BundleCacheKey) -> CompareBundle | None:
     entry = _BUNDLE_CACHE.get(key)
     if not entry:
         return None
@@ -989,7 +1058,7 @@ def _cache_get(key: tuple[int, int, int | None]) -> CompareBundle | None:
     return bundle
 
 
-def _cache_put(key: tuple[int, int, int | None], bundle: CompareBundle) -> None:
+def _cache_put(key: _BundleCacheKey, bundle: CompareBundle) -> None:
     if len(_BUNDLE_CACHE) >= _CACHE_MAX:
         # Drop oldest
         oldest_key = min(_BUNDLE_CACHE, key=lambda k: _BUNDLE_CACHE[k][0])
@@ -1004,18 +1073,26 @@ def build_compare_bundle(
     engine: Engine,
     use_cache: bool = True,
     years_back: int | None = None,
+    categories: set[str] | None = None,
+    distances: set[str] | None = None,
 ) -> CompareBundle:
     """Top-level: fetch + assemble all cards for the (a, b) athlete pair.
 
-    ``years_back`` filters all shared races and split averages to the
-    last N years. If None, shared races are unfiltered (all-time) and
-    split averages default to a 4-year window.
+    Filter semantics:
+      - ``years_back``: limit shared races + split averages to last N years
+      - ``categories``: restrict to race categories (wtcs, world_cup,
+        continental, other). None or empty => no restriction.
+      - ``distances``: restrict to distance categories (super_sprint,
+        sprint, standard, middle_distance, long_distance). None or empty
+        => no restriction.
     """
     if a_id == b_id:
         raise ValueError("Athletes must be different")
     sorted_ids = tuple(sorted((int(a_id), int(b_id))))
     yb = int(years_back) if years_back is not None else None
-    key = (sorted_ids[0], sorted_ids[1], yb)
+    cats_set = {c.lower() for c in categories} if categories else set()
+    dists_set = {d.lower() for d in distances if d} if distances else set()
+    key: _BundleCacheKey = (sorted_ids[0], sorted_ids[1], yb, frozenset(cats_set), frozenset(dists_set))
     cached = _cache_get(key) if use_cache else None
     if cached:
         # Cache stores in sorted order. If caller asked in reverse, swap.
@@ -1032,7 +1109,12 @@ def build_compare_bundle(
 
     races_a = fetch_athlete_races(a_id, engine=engine)
     races_b = fetch_athlete_races(b_id, engine=engine)
-    shared = _shared_races_df(races_a, races_b, years_back=yb)
+    shared = _shared_races_df(
+        races_a, races_b,
+        years_back=yb,
+        categories=cats_set or None,
+        distances=dists_set or None,
+    )
     split_years = yb if yb is not None else 4
 
     if shared.empty:
@@ -1041,7 +1123,12 @@ def build_compare_bundle(
             athlete_b=AthleteRef.from_entry(b_entry),
             record=H2HRecord(0, 0, 0, 0, None, None, None, None, None),
             how_they_win=HowTheyWin(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
-            split_averages=_build_split_averages(races_a, races_b, years_back=split_years),
+            split_averages=_build_split_averages(
+                races_a, races_b,
+                years_back=split_years,
+                categories=cats_set or None,
+                distances=dists_set or None,
+            ),
             pack_profile=[_empty_pack_profile(int(a_id)), _empty_pack_profile(int(b_id))],
             transitions=TransitionH2H(0, 0, 0, 0, 0, 0, None, None, None, None, None, None),
             race_log=[],
@@ -1062,7 +1149,12 @@ def build_compare_bundle(
         athlete_b=AthleteRef.from_entry(b_entry),
         record=_build_record(shared),
         how_they_win=_build_how_they_win(shared),
-        split_averages=_build_split_averages(races_a, races_b, years_back=split_years),
+        split_averages=_build_split_averages(
+            races_a, races_b,
+            years_back=split_years,
+            categories=cats_set or None,
+            distances=dists_set or None,
+        ),
         pack_profile=[
             _build_pack_profile(int(a_id), pack_all),
             _build_pack_profile(int(b_id), pack_all),
