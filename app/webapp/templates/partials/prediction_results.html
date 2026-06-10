@@ -42,6 +42,67 @@
     </form>
   </div>
 
+  {% if result.sof %}
+    {% set sof = result.sof %}
+    <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:14px; padding:10px 14px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px;">
+      <div style="font-weight:600; align-self:center; min-width:140px;">
+        Strength of Field
+        <div class="muted" style="font-size:11px; font-weight:400;">
+          based on {{ sof.n_athletes }} athletes,
+          {{ sof.n_with_elo }} with Elo, {{ sof.n_with_wt_rank }} with WT rank
+        </div>
+      </div>
+      {% for label, key, raw_key, fmt in [
+        ('Elo depth',   'elo',   'mean_elo_top10',       '%.0f'),
+        ('WT depth',    'wt',    'mean_wt_rank_top10',   '%.0f'),
+        ('Top-50 count','depth', 'n_top50_world_ranked', '%d')
+      ] %}
+        {% set score = sof.scores[key] %}
+        {% set raw = sof.raw[raw_key] %}
+        <div style="flex:1; min-width:170px;">
+          <div class="muted" style="font-size:12px;">{{ label }}</div>
+          <div style="display:flex; align-items:baseline; gap:6px;">
+            <span style="font-size:22px; font-weight:700;
+                {% if score >= 80 %}color:#16a34a;
+                {% elif score >= 60 %}color:#0ea5e9;
+                {% elif score >= 40 %}color:#f59e0b;
+                {% else %}color:#94a3b8;{% endif %}">
+              {{ score }}
+            </span>
+            <span class="muted" style="font-size:11px;">/100</span>
+          </div>
+          <div style="height:6px; background:#e2e8f0; border-radius:3px; overflow:hidden; margin:4px 0;">
+            <div style="width:{{ score }}%; height:100%;
+                {% if score >= 80 %}background:#16a34a;
+                {% elif score >= 60 %}background:#0ea5e9;
+                {% elif score >= 40 %}background:#f59e0b;
+                {% else %}background:#94a3b8;{% endif %}"></div>
+          </div>
+          <div class="muted" style="font-size:11px;">
+            {% if raw is not none and raw == raw %}
+              raw: {{ fmt | format(raw) }}
+            {% else %}raw: -{% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% if result.wt_info %}
+    {% set wt = result.wt_info %}
+    <div class="muted" style="font-size:11px; margin-bottom:6px;">
+      <strong>WT Ranking points</strong> —
+      {% if not wt.in_ranking %}
+        this event is not in the World Triathlon Ranking ({{ wt.event_type }}), so scoring columns are blank.
+      {% else %}
+        {{ wt.event_type | replace('_', ' ') }} ({{ wt.base_points }} base × 0.925<sup>rank−1</sup>{% if wt.top5_bonus_applies %}, +top-5 bonus{% endif %}{% if wt.qof_applies %}, pre-QoF{% endif %}).
+        <strong>Pts @ Sim Rank</strong> = points if the athlete finishes at their Sim Rank position.
+        <strong>Exp. WT Pts</strong> = expected value across the full rank distribution.
+        Athletes &gt;8% slower than the winner get 0.
+      {% endif %}
+    </div>
+  {% endif %}
+
   {% if result.display_df is not none %}
     <div style="overflow-x:auto;">
       <table>

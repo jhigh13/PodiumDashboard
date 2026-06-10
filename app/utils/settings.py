@@ -41,6 +41,7 @@ class Settings(BaseSettings):
         case_sensitive = False
         env_file = str(PROJECT_ROOT / ".env")
         env_file_encoding = "utf-8"
+        extra = "ignore"  # Ignore unknown .env keys (e.g. TZ, GITPAT, INSCYD_*)
 
 @lru_cache
 def get_settings() -> Settings:

@@ -11,7 +11,8 @@
       "WebSearch",
       "Task",
       "TodoWrite",
-      "NotebookEdit"
+      "NotebookEdit",
+      "PowerShell"
     ]
   }
 }

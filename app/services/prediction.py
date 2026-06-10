@@ -35,8 +35,8 @@ TRIATHLON_DB_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "triathlon-db")
 )
 MODEL_PATHS = {
-    "men": os.path.join(TRIATHLON_DB_ROOT, "models", "bundle_elite_v45.joblib"),
-    "women": os.path.join(TRIATHLON_DB_ROOT, "models", "bundle_elite_v45.joblib"),
+    "men": os.path.join(TRIATHLON_DB_ROOT, "models", "bundle_elite_v60_men.joblib"),
+    "women": os.path.join(TRIATHLON_DB_ROOT, "models", "bundle_elite_v60_women.joblib"),
 }
 
 
@@ -238,6 +238,25 @@ def run_prediction_pipeline(
 
     display_df = format_simulation_output(sim_df)
 
+    # Strength of Field — runs after the sim using the same athlete list
+    sof = None
+    try:
+        from app.services.sof import compute_field_sof
+        ids_for_sof = [int(x) for x in sim_df["athlete_id"].dropna().tolist()]
+        sof = compute_field_sof(
+            tri_engine, ids_for_sof, prog_name, event_meta.get("event_date")
+        )
+    except Exception as e:
+        logger.warning(f"SoF computation failed: {e}")
+
+    # Expected WT Ranking points per athlete (section 1.3 + 1.4 + 1.6 of criteria)
+    wt_info = None
+    try:
+        from app.services.wt_points import add_expected_points_to_display
+        display_df, wt_info = add_expected_points_to_display(sim_df, display_df, event_meta)
+    except Exception as e:
+        logger.warning(f"WT points computation failed: {e}")
+
     return {
         "display_df": display_df,
         "event_meta": event_meta,
@@ -246,6 +265,8 @@ def run_prediction_pipeline(
         "breakaway_bias": breakaway_bias,
         "form_share": form_share,
         "n_sims": n_sims,
+        "sof": sof,
+        "wt_info": wt_info,
     }
 
 
@@ -305,6 +326,27 @@ def resimulate(
 
     display_df = format_simulation_output(sim_df)
 
+    # Strength of Field — same as run_prediction_pipeline
+    sof = None
+    try:
+        from app.services.sof import compute_field_sof
+        prog_name_local = event_meta.get("prog_name") if event_meta else None
+        ids_for_sof = [int(x) for x in sim_df["athlete_id"].dropna().tolist()]
+        sof = compute_field_sof(
+            tri_engine, ids_for_sof, prog_name_local,
+            event_meta.get("event_date") if event_meta else None,
+        )
+    except Exception as e:
+        logger.warning(f"SoF computation failed (resim): {e}")
+
+    # Expected WT Ranking points (resim path)
+    wt_info = None
+    try:
+        from app.services.wt_points import add_expected_points_to_display
+        display_df, wt_info = add_expected_points_to_display(sim_df, display_df, event_meta)
+    except Exception as e:
+        logger.warning(f"WT points computation failed (resim): {e}")
+
     return {
         "display_df": display_df,
         "event_meta": event_meta,
@@ -313,4 +355,6 @@ def resimulate(
         "breakaway_bias": breakaway_bias,
         "form_share": form_share,
         "n_sims": n_sims,
+        "sof": sof,
+        "wt_info": wt_info,
     }
