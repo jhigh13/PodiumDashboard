@@ -48,6 +48,7 @@ from app.services.workout_cache import (
     is_timeseries_cached,
     parse_fit_to_timeseries,
     save_timeseries,
+    get_cached_timeseries,
 )
 from app.services.recovery_alerts import evaluate_recovery_alert
 from app.services.recovery_alert_runs import list_recovery_alert_runs, upsert_recovery_alert_run
@@ -3011,6 +3012,8 @@ def create_app() -> FastAPI:
             template = "partials/coach_tab_race.html"
         elif tab_norm in {"prediction", "predictions", "predict"}:
             template = "partials/coach_tab_prediction.html"
+        elif tab_norm in {"lab_export", "lab", "workout_simulation"}:
+            template = "partials/coach_tab_lab_export.html"
         else:
             raise HTTPException(status_code=400, detail="Invalid tab")
 
@@ -3022,7 +3025,251 @@ def create_app() -> FastAPI:
             "default_end": today,
             "default_start": today - timedelta(days=14),
         }
+
+        # Lab Export tab needs the coach's roster for the athlete dropdown.
+        if template.endswith("coach_tab_lab_export.html"):
+            session_role = request.session.get("role") or "athlete"
+            coach_id = request.session.get("athlete_id")
+            if session_role == "coach" and coach_id:
+                with get_session() as s:
+                    roster = s.execute(
+                        select(Athlete)
+                        .join(CoachRosterMember, CoachRosterMember.athlete_id == Athlete.id)
+                        .where(CoachRosterMember.coach_athlete_id == int(coach_id))
+                        .order_by(Athlete.name)
+                    ).scalars().all()
+                ctx["roster"] = list(roster or [])
+            else:
+                ctx["roster"] = []
+
         return templates.TemplateResponse(template, ctx)
+
+    # ── Lab Export tab ────────────────────────────────────────────────────────
+
+    def _lab_workouts_for_athlete(athlete_id: int, limit: int = 60) -> list[dict]:
+        """List recent workouts for the athlete (manual uploads + TP), most recent first."""
+        cutoff = get_effective_today() - timedelta(days=180)
+        with get_session() as s:
+            rows = s.execute(
+                select(Workout)
+                .where(Workout.athlete_id == int(athlete_id))
+                .where(Workout.date >= cutoff)
+                .order_by(Workout.date.desc())
+                .limit(limit)
+            ).scalars().all()
+        out: list[dict] = []
+        for w in rows:
+            sport_str = str(w.sport or "")
+            dur_str = _format_duration(int(w.duration_sec)) if w.duration_sec else ""
+            raw = w.raw_json or {}
+            label = str(raw.get("label") or "")
+            tp_id = str(w.tp_workout_id or "")
+            is_manual = tp_id.startswith("manual_")
+            tag = "📎" if is_manual else "TP"
+            parts = [f"{tag} {w.date}", sport_str, label or ("Uploaded FIT" if is_manual else "TP workout")]
+            if dur_str:
+                parts.append(dur_str)
+            out.append({
+                "workout_id": tp_id,
+                "sport": sport_str,
+                "duration_sec": w.duration_sec,
+                "label": " • ".join(p for p in parts if p),
+            })
+        return out
+
+    def _athlete_short_name(name: str | None) -> str:
+        parts = (name or "").strip().split()
+        if len(parts) >= 2:
+            return parts[0][0] + parts[-1]
+        if parts:
+            return parts[0]
+        return ""
+
+    def _build_lab_loaded_ctx(target_athlete_id: int, tp_workout_id: str, sport: str) -> dict:
+        """Build the context dict for lab_export_loaded.html."""
+        from urllib.parse import quote_plus
+
+        with get_session() as s:
+            wrow = s.execute(
+                select(Workout).where(Workout.tp_workout_id == tp_workout_id).limit(1)
+            ).scalars().first()
+            ath = s.get(Athlete, int(target_athlete_id))
+
+        cached = get_cached_timeseries(tp_workout_id) if tp_workout_id.startswith("manual_") else None
+        channels: list[str] = []
+        n_records = 0
+        avg_power = None
+        max_power = None
+        has_power = False
+
+        if cached is not None:
+            wc = cached.get("WorkoutChannels") or {}
+            channels = list(wc.get("Channels") or [])
+            data_rows = wc.get("Data") or []
+            n_records = len(data_rows)
+            if "Power" in channels:
+                idx = channels.index("Power")
+                pw = [
+                    float(r["Values"][idx]) for r in data_rows
+                    if r.get("Values") and idx < len(r["Values"]) and r["Values"][idx] is not None
+                ]
+                pw_nz = [p for p in pw if p > 0]
+                if pw_nz:
+                    has_power = True
+                    avg_power = int(round(sum(pw_nz) / len(pw_nz)))
+                    max_power = int(round(max(pw_nz)))
+
+        label = ""
+        if wrow:
+            raw = wrow.raw_json or {}
+            label = str(raw.get("label") or "") or f"{wrow.date} {wrow.sport or ''}".strip()
+        dur_hms = _format_duration(int(wrow.duration_sec)) if (wrow and wrow.duration_sec) else None
+
+        return {
+            "loaded": {
+                "label": label or tp_workout_id,
+                "label_url": quote_plus(label or tp_workout_id),
+                "sport": sport or (wrow.sport if wrow else "bike"),
+                "n_records": n_records,
+                "duration_hms": dur_hms,
+                "channels": channels,
+                "avg_power": avg_power,
+                "max_power": max_power,
+                "has_power": has_power,
+                "target_athlete_id": int(target_athlete_id),
+                "tp_workout_id": tp_workout_id,
+                "athlete_short": _athlete_short_name(ath.name if ath else ""),
+            }
+        }
+
+    @app.get("/partials/lab_export_panel", response_class=HTMLResponse)
+    def partial_lab_export_panel(
+        request: Request,
+        target_athlete_id: int | None = None,
+        _: int = Depends(require_coach),
+    ):
+        if not target_athlete_id:
+            return HTMLResponse("<div class='muted'>Select an athlete to see workout sources.</div>")
+        workouts = _lab_workouts_for_athlete(int(target_athlete_id))
+        ctx = {
+            "request": request,
+            "target_athlete_id": int(target_athlete_id),
+            "workouts": workouts,
+            "mode": "upload",
+            "loaded": None,
+        }
+        return templates.TemplateResponse("partials/lab_export_panel.html", ctx)
+
+    @app.get("/partials/lab_export_loaded", response_class=HTMLResponse)
+    def partial_lab_export_loaded(
+        request: Request,
+        target_athlete_id: int,
+        tp_workout_id: str,
+        sport: str = "bike",
+        _: int = Depends(require_coach),
+    ):
+        if not tp_workout_id:
+            return HTMLResponse("<div class='muted'>Pick a workout to load.</div>")
+        ctx = _build_lab_loaded_ctx(int(target_athlete_id), tp_workout_id, sport)
+        ctx["request"] = request
+        return templates.TemplateResponse("partials/lab_export_loaded.html", ctx)
+
+    @app.post("/actions/lab_export_upload", response_class=HTMLResponse)
+    async def action_lab_export_upload(
+        request: Request,
+        file: UploadFile = File(...),
+        target_athlete_id: int = Form(...),
+        sport: str = Form("bike"),
+        label: str = Form(""),
+        requester_id: int = Depends(require_coach),
+    ):
+        # Reuse the existing FIT upload endpoint's parser by calling it via a thin
+        # local copy of its logic — we want a different response shape (panel
+        # re-render, not the Race Performance dropdown).
+        import io, hashlib
+        filename = file.filename or ""
+        if not filename.lower().endswith(".fit"):
+            return HTMLResponse("<div class='muted'>Only .fit files are supported.</div>")
+
+        content = await file.read()
+        if not content:
+            return HTMLResponse("<div class='muted'>Uploaded file is empty.</div>")
+
+        try:
+            payload = parse_fit_to_timeseries(content)
+        except Exception as e:  # noqa: BLE001
+            return HTMLResponse(f"<div class='muted'>Could not parse FIT file: {e}</div>")
+
+        channels = (payload.get("WorkoutChannels") or {}).get("Channels") or []
+        data_rows = (payload.get("WorkoutChannels") or {}).get("Data") or []
+        if not data_rows:
+            return HTMLResponse("<div class='muted'>FIT file parsed but contained no time-series records.</div>")
+
+        # Workout date + sport from FIT session
+        workout_date = date.today()
+        try:
+            import fitparse
+            fit = fitparse.FitFile(io.BytesIO(content))
+            sessions = list(fit.get_messages("session"))
+            if sessions:
+                start_ts = sessions[0].get_value("start_time")
+                if start_ts and hasattr(start_ts, "date"):
+                    workout_date = start_ts.date()
+                fit_sport_raw = str(sessions[0].get_value("sport") or "").lower()
+                if fit_sport_raw in ("cycling", "bike", "biking"):
+                    sport = "bike"
+                elif fit_sport_raw in ("swimming", "swim"):
+                    sport = "swim"
+                elif fit_sport_raw in ("running", "run"):
+                    sport = "run"
+        except Exception:
+            pass
+
+        digest = hashlib.sha256(content).hexdigest()[:14]
+        workout_id = f"manual_{digest}"
+        save_timeseries(workout_id, payload)
+
+        duration_sec: int | None = None
+        if data_rows:
+            last_ms = data_rows[-1].get("MillisecondOffset") or 0
+            try:
+                duration_sec = int(float(last_ms) / 1000)
+            except Exception:
+                duration_sec = None
+
+        with get_session() as session:
+            existing = session.execute(
+                select(Workout).where(Workout.tp_workout_id == workout_id).limit(1)
+            ).scalars().first()
+            row_label = label or filename
+            if existing:
+                existing.date = workout_date
+                existing.sport = sport
+                existing.duration_sec = duration_sec
+                existing.raw_json = {"label": row_label, "channels": channels}
+            else:
+                session.add(Workout(
+                    athlete_id=int(target_athlete_id),
+                    tp_workout_id=workout_id,
+                    date=workout_date,
+                    sport=sport,
+                    duration_sec=duration_sec,
+                    raw_json={"label": row_label, "channels": channels},
+                ))
+            session.commit()
+
+        # Re-render the panel showing the just-uploaded workout as the loaded card.
+        workouts = _lab_workouts_for_athlete(int(target_athlete_id))
+        loaded_ctx = _build_lab_loaded_ctx(int(target_athlete_id), workout_id, sport)
+        ctx = {
+            "request": request,
+            "target_athlete_id": int(target_athlete_id),
+            "workouts": workouts,
+            "mode": "upload",
+            "sport": sport,
+            **loaded_ctx,
+        }
+        return templates.TemplateResponse("partials/lab_export_panel.html", ctx)
 
     @app.get("/partials/coach_overview", response_class=HTMLResponse)
     def partial_coach_overview(
@@ -3661,8 +3908,11 @@ def create_app() -> FastAPI:
         14: "World Rankings — Women",
         15: "WTCS Rankings — Men",
         16: "WTCS Rankings — Women",
+        11: "Olympic Qual — Men",
+        12: "Olympic Qual — Women",
     }
     WTCS_CATEGORIES = {15, 16}
+    OLYMPIC_CATEGORIES = {11, 12}
 
     @app.get("/rankings")
     def rankings_page(request: Request):

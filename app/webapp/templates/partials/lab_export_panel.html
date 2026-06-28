@@ -1,0 +1,111 @@
+{# Body of the Lab Export panel — uploader + workout dropdown + download link.
+   Re-rendered when athlete changes, after an upload, or when a workout is picked. #}
+<div>
+  {# ── Source toggle ── #}
+  <div style="display:flex; gap:18px; margin-bottom:14px;">
+    <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+      <input type="radio" name="source_mode" value="upload"
+             {% if mode == 'upload' or not mode %}checked{% endif %}
+             onclick="document.getElementById('lab-upload').style.display='block'; document.getElementById('lab-pick').style.display='none';">
+      Upload new FIT
+    </label>
+    <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+      <input type="radio" name="source_mode" value="pick"
+             {% if mode == 'pick' %}checked{% endif %}
+             onclick="document.getElementById('lab-upload').style.display='none'; document.getElementById('lab-pick').style.display='block';">
+      Pick existing workout
+    </label>
+  </div>
+
+  {# ── Upload ── #}
+  <div id="lab-upload"
+       style="display:{% if mode == 'pick' %}none{% else %}block{% endif %}; padding:12px; border:1px solid #e2e8f0; border-radius:6px; margin-bottom:12px;">
+    <form hx-post="/actions/lab_export_upload"
+          hx-target="#lab-export-panel"
+          hx-swap="innerHTML"
+          hx-encoding="multipart/form-data"
+          enctype="multipart/form-data"
+          style="display:flex; gap:10px; flex-wrap:wrap; align-items:end;">
+      <input type="hidden" name="target_athlete_id" value="{{ target_athlete_id }}">
+      <div>
+        <label for="lab-fit-file">FIT file</label>
+        <input id="lab-fit-file" name="file" type="file" accept=".fit,.FIT">
+      </div>
+      <div>
+        <label for="lab-sport">Sport</label>
+        <select id="lab-sport" name="sport">
+          <option value="bike" {% if sport == 'bike' or not sport %}selected{% endif %}>Bike</option>
+          <option value="run" {% if sport == 'run' %}selected{% endif %}>Run</option>
+          <option value="swim" {% if sport == 'swim' %}selected{% endif %}>Swim</option>
+        </select>
+      </div>
+      <div style="flex:1; min-width:180px;">
+        <label for="lab-label">Label (optional)</label>
+        <input id="lab-label" name="label" type="text" placeholder="e.g. SanFran threshold ride">
+      </div>
+      <button class="btn primary" type="submit">Upload &amp; process</button>
+    </form>
+  </div>
+
+  {# ── Pick existing ── #}
+  <div id="lab-pick"
+       style="display:{% if mode == 'pick' %}block{% else %}none{% endif %}; padding:12px; border:1px solid #e2e8f0; border-radius:6px; margin-bottom:12px;">
+    <form hx-get="/partials/lab_export_loaded"
+          hx-target="#lab-export-loaded"
+          hx-swap="innerHTML"
+          style="display:flex; gap:10px; flex-wrap:wrap; align-items:end;">
+      <input type="hidden" name="target_athlete_id" value="{{ target_athlete_id }}">
+      <div style="flex:1; min-width:340px;">
+        <label for="lab-existing-wid">Workout</label>
+        <select id="lab-existing-wid" name="tp_workout_id">
+          {% if not workouts %}
+            <option value="">— No workouts found —</option>
+          {% else %}
+            <option value="">— Pick a workout —</option>
+            {% for w in workouts %}
+              <option value="{{ w.workout_id }}" data-sport="{{ w.sport }}">{{ w.label }}</option>
+            {% endfor %}
+          {% endif %}
+        </select>
+      </div>
+      <div>
+        <label for="lab-pick-sport">Sport</label>
+        <select id="lab-pick-sport" name="sport">
+          <option value="bike">Bike</option>
+          <option value="run">Run</option>
+          <option value="swim">Swim</option>
+        </select>
+      </div>
+      <button class="btn primary" type="submit">Load</button>
+    </form>
+    <div class="muted" style="font-size:11px; margin-top:6px;">
+      Shows the most recent {{ workouts|length if workouts else 0 }} workouts
+      (manual uploads + TP, last 180 days).
+    </div>
+  </div>
+
+  {# Slot for the "loaded workout" summary card + download buttons. #}
+  <div id="lab-export-loaded">
+    {% if loaded %}
+      {% include "partials/lab_export_loaded.html" %}
+    {% endif %}
+  </div>
+</div>
+
+<script>
+  // Auto-fill the pick-sport dropdown to match the selected workout's sport.
+  (function () {
+    const sel = document.getElementById('lab-existing-wid');
+    const sport = document.getElementById('lab-pick-sport');
+    if (sel && sport) {
+      sel.addEventListener('change', function () {
+        const opt = sel.options[sel.selectedIndex];
+        if (opt && opt.dataset && opt.dataset.sport) {
+          for (const o of sport.options) {
+            if (o.value === opt.dataset.sport) { sport.value = opt.dataset.sport; break; }
+          }
+        }
+      });
+    }
+  })();
+</script>

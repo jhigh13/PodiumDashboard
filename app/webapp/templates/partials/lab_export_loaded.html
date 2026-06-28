@@ -1,0 +1,28 @@
+{# Renders when a workout has been uploaded or picked successfully.
+   `loaded` dict shape:
+       label, sport, n_records, duration_hms, channels (list[str]),
+       avg_power, max_power, target_athlete_id, tp_workout_id, athlete_short #}
+<div style="margin-top:10px; padding:12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px;">
+  <div style="font-weight:600; margin-bottom:6px;">{{ loaded.label }}</div>
+  <div class="muted" style="font-size:12px; margin-bottom:10px;">
+    {{ loaded.n_records | default(0) }} records · duration {{ loaded.duration_hms or '—' }} ·
+    channels: {{ (loaded.channels or []) | join(', ') or '—' }}
+    {% if loaded.avg_power %} · avg power {{ loaded.avg_power }} W{% endif %}
+    {% if loaded.max_power %} · max power {{ loaded.max_power }} W{% endif %}
+  </div>
+
+  {% if loaded.has_power or loaded.sport != 'bike' %}
+    <a class="btn primary"
+       href="/api/timeseries_xlsx?target_athlete_id={{ loaded.target_athlete_id }}&tp_workout_id={{ loaded.tp_workout_id }}&sport={{ loaded.sport }}&trimmed=true&athlete_short={{ loaded.athlete_short }}&race_label={{ loaded.label_url }}"
+       download>
+      &#x2B07; Download Lab Export (trimmed)
+    </a>
+    <span class="muted" style="font-size:11px; margin-left:10px;">
+      Excludes leading/trailing zero-power periods and gaps &gt; 60 s.
+    </span>
+  {% else %}
+    <div class="muted" style="color:#dc2626;">
+      No power channel detected — INSCYD bike export needs power. Try a different file or pick run/swim.
+    </div>
+  {% endif %}
+</div>

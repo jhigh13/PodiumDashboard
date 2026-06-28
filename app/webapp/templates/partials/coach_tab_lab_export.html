@@ -1,0 +1,32 @@
+{# Lab Export tab — upload or pick a workout, get the INSCYD-ready Excel.
+   Coach-only. No chart, no race coupling. #}
+<div class="card">
+  <h2 style="margin-top:0;">Lab Export</h2>
+  <div class="muted" style="font-size:13px; margin-bottom:14px;">
+    Upload a FIT file (or pick one already in the system), then download the
+    Excel formatted for INSCYD lactate / metabolic simulation. Trimmed mode
+    strips leading and trailing zero-power periods.
+  </div>
+
+  {# Athlete selector — same panel structure other tabs use. #}
+  <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end; margin-bottom:14px;">
+    <div>
+      <label for="lab-export-athlete">Athlete</label>
+      <select id="lab-export-athlete"
+              name="target_athlete_id"
+              hx-get="/partials/lab_export_panel"
+              hx-target="#lab-export-panel"
+              hx-trigger="change"
+              hx-include="this">
+        <option value="">— Select an athlete —</option>
+        {% for a in (roster or []) %}
+          <option value="{{ a.id }}">{{ a.name }} (id:{{ a.id }})</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <div id="lab-export-panel">
+    <div class="muted">Select an athlete to see workout sources.</div>
+  </div>
+</div>

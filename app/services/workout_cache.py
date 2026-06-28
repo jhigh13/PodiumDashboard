@@ -162,13 +162,22 @@ def parse_fit_to_timeseries(fit_bytes: bytes) -> dict:
     if not records:
         return {"WorkoutChannels": {"Channels": [], "Data": []}}
 
-    # Discover which channels are present by scanning the first record's fields.
-    first_fields = {f.name for f in records[0].fields}
+    # Discover which channels are present by scanning ALL records.
+    # Scanning only records[0] is unreliable: power, cadence, and heart_rate
+    # commonly appear several seconds into a ride (sensor pairing / pre-pedalling),
+    # so the first record may be missing them even though they're present throughout
+    # the rest of the file. Bug repro: a FIT with power from second 8 onward would
+    # have its entire power channel dropped under the old logic.
+    all_field_names: set[str] = set()
+    for rec in records:
+        for f in rec.fields:
+            all_field_names.add(f.name)
+
     channels: list[str] = []
     field_keys: list[str] = []  # parallel list of FIT field names
     seen_channels: set[str] = set()
     for fit_name, ch_name in _FIT_FIELD_TO_CHANNEL:
-        if fit_name in first_fields and ch_name not in seen_channels:
+        if fit_name in all_field_names and ch_name not in seen_channels:
             channels.append(ch_name)
             field_keys.append(fit_name)
             seen_channels.add(ch_name)
