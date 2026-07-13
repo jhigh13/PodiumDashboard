@@ -1,0 +1,39 @@
+<div class="card">
+  <h4 style="margin-top:0;">Races in {{ year }}</h4>
+
+  {% for w in warnings %}
+    <div class="muted" style="color:#b45309; font-size:13px; margin-bottom:4px;">&#9888; {{ w }}</div>
+  {% endfor %}
+
+  {% if races %}
+    <div class="muted" style="font-size:13px; margin-bottom:8px;">
+      Unique races for the selected athletes ({{ n_selected }} selected). Pick one to load bike files.
+    </div>
+    <form id="rd-race-form"
+      hx-get="/partials/race_difficulty/workouts"
+      hx-trigger="change"
+      hx-include="#rd-controls, #rd-race-form"
+      hx-target="#rd-workouts"
+      hx-swap="innerHTML"
+      style="margin:0; display:flex; flex-direction:column; gap:6px; max-height:340px; overflow-y:auto;"
+    >
+      {% for r in races %}
+        <label style="font-size:0.9rem; cursor:pointer; display:flex; gap:8px; align-items:baseline;">
+          <input type="radio" name="race_key" value="{{ r.key }}">
+          <span>
+            <b>{{ r.event_date }}</b> &mdash; {{ r.event_name }}
+            {% if r.prog_name %}<span class="muted">&bull; {{ r.prog_name }}</span>{% endif %}
+            {% if r.prog_distance_category %}<span class="muted">&bull; {{ r.prog_distance_category }}</span>{% endif %}
+            <span class="muted" style="font-size:12px;">&mdash; {{ r.participants | join(", ") }}</span>
+          </span>
+        </label>
+      {% endfor %}
+    </form>
+  {% else %}
+    <div class="muted">No World Triathlon races found in {{ year }} for the selected athletes.</div>
+  {% endif %}
+</div>
+
+{# Clear stale downstream panels whenever a fresh race list loads. #}
+<div id="rd-workouts" hx-swap-oob="true"></div>
+<div id="rd-analysis" hx-swap-oob="true"></div>

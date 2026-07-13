@@ -251,15 +251,21 @@ class TrainingPeaksAPI:
         """
         if not workout_id:
             return []
-        
+
+        # Resolve auth BEFORE building the URL: _headers() sets _using_coach_token,
+        # which decides whether the athlete-scoped path is needed. On a fresh API
+        # instance the flag is still False, producing an unscoped URL + coach token
+        # → 403 from TrainingPeaks.
+        headers = self._headers()
+
         # Use athlete-scoped endpoint if tp_athlete_id provided
         if tp_athlete_id and self._using_coach_token:
             url = f"{API_BASE}/v2/workouts/{tp_athlete_id}/wod/file/{workout_id}/"
         else:
             url = f"{API_BASE}/v2/workouts/wod/file/{workout_id}/"
-        
+
         # Make HEAD request to check available formats
-        r = requests.head(url, headers=self._headers(), timeout=10)
+        r = requests.head(url, headers=headers, timeout=10)
         
         if r.status_code == 404:
             # Workout has no structured data
@@ -300,15 +306,21 @@ class TrainingPeaksAPI:
         if file_format not in valid_formats:
             raise ValueError(f"Invalid format '{file_format}'. Must be one of: {', '.join(valid_formats)}")
         
+        # Resolve auth BEFORE building the URL: _headers() sets _using_coach_token,
+        # which decides whether the athlete-scoped path is needed. On a fresh API
+        # instance the flag is still False, producing an unscoped URL + coach token
+        # → 403 from TrainingPeaks.
+        headers = self._headers()
+
         # Build URL - use athlete-scoped endpoint if tp_athlete_id provided
         if tp_athlete_id and self._using_coach_token:
             url = f"{API_BASE}/v2/workouts/{tp_athlete_id}/wod/file/{workout_id}/?format={file_format}"
         else:
             # Athlete accessing their own workout or demo
             url = f"{API_BASE}/v2/workouts/wod/file/{workout_id}/?format={file_format}"
-        
+
         # Make request
-        r = requests.get(url, headers=self._headers(), timeout=30)
+        r = requests.get(url, headers=headers, timeout=30)
         
         # Handle error responses
         if r.status_code == 400:

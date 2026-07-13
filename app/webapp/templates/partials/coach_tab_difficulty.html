@@ -1,0 +1,42 @@
+{# Race Difficulty tab — multi-athlete W/kg comparison for one WT race.
+   Owns its own multi-athlete state (checkbox list), independent of #controls. #}
+<div class="card">
+  <h2 style="margin-top:0;">Race Difficulty</h2>
+  <div class="muted" style="font-size:13px; margin-bottom:14px;">
+    Pick the athletes who raced, find the race, confirm each rider's bike file
+    and weight, then Analyze. Scores rank how hard the ride was for each rider
+    (0&ndash;100, 100 = hardest) from average watts/kg normalized across the group.
+  </div>
+
+  <form id="rd-controls" style="margin:0;">
+    <div class="muted" style="margin-bottom:4px;">Athletes</div>
+    <div style="display:flex; gap:6px 16px; flex-wrap:wrap; margin-bottom:12px;">
+      {% for a in (roster or []) %}
+        <label style="font-size:0.9rem; cursor:pointer; white-space:nowrap;">
+          <input type="checkbox" name="athlete_ids" value="{{ a.id }}"> {{ a.name }}
+        </label>
+      {% endfor %}
+    </div>
+
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:end;">
+      <div>
+        <div class="muted">Year</div>
+        <select name="rd_year" id="rd-year">
+          {% for y in years %}
+            <option value="{{ y }}">{{ y }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button class="btn" type="button" id="rd-find-races"
+        hx-get="/partials/race_difficulty/races"
+        hx-include="#rd-controls"
+        hx-target="#rd-races"
+        hx-swap="innerHTML"
+      >Find Races</button>
+    </div>
+  </form>
+</div>
+
+<div id="rd-races"></div>
+<div id="rd-workouts"></div>
+<div id="rd-analysis"></div>

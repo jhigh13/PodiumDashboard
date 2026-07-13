@@ -1,0 +1,654 @@
+{% if warnings %}
+<div class="card">
+  {% for w in warnings %}
+    <div class="muted" style="color:#b45309; font-size:13px;">&#9888; {{ w.name }}: {{ w.reason }}</div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if payload %}
+<style>
+  /* Dual-handle range slider: two overlapping <input type=range> elements
+     with pointer-events limited to their thumbs, plus a fill bar drawn
+     underneath to show the selected span. */
+  .rd-dual-slider { position: relative; height: 22px; width: 210px; }
+  .rd-dual-track {
+    position: absolute; top: 50%; left: 0; right: 0; height: 4px;
+    margin-top: -2px; background: #e2e8f0; border-radius: 2px;
+  }
+  .rd-dual-fill {
+    position: absolute; top: 50%; height: 4px; margin-top: -2px;
+    background: #2563eb; border-radius: 2px;
+  }
+  .rd-dual-slider input[type="range"] {
+    position: absolute; top: 0; left: 0; width: 100%; height: 22px;
+    margin: 0; padding: 0; background: transparent; pointer-events: none;
+    -webkit-appearance: none; appearance: none;
+  }
+  .rd-dual-slider input[type="range"]::-webkit-slider-runnable-track { background: transparent; }
+  .rd-dual-slider input[type="range"]::-moz-range-track { background: transparent; border: none; }
+  .rd-dual-slider input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; pointer-events: auto;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #2563eb; border: 2px solid #ffffff;
+    box-shadow: 0 0 0 1px #94a3b8; cursor: pointer; margin-top: 0;
+  }
+  .rd-dual-slider input[type="range"]::-moz-range-thumb {
+    pointer-events: auto; width: 16px; height: 16px; border-radius: 50%;
+    background: #2563eb; border: 2px solid #ffffff; box-shadow: 0 0 0 1px #94a3b8; cursor: pointer;
+  }
+  .rd-num { width: 60px; font-size: 12px; padding: 3px 5px; }
+</style>
+<div class="card">
+  <h4 style="margin-top:0;">
+    {{ payload.race.event_name }}
+    {% if payload.race.prog_name %}<span class="muted">&bull; {{ payload.race.prog_name }}</span>{% endif %}
+    <span class="muted">({{ payload.race.event_date }})</span>
+  </h4>
+
+  <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start;">
+    <div style="flex: 1 1 560px; min-width:420px;">
+      <div style="display:flex; gap:6px; margin-bottom:6px;">
+        <button type="button" class="btn secondary" id="rd-view-lines" style="font-size:12px; padding:2px 12px;">Lines</button>
+        <button type="button" class="btn secondary" id="rd-view-heat" style="font-size:12px; padding:2px 12px;">Heatmap</button>
+      </div>
+      <div id="rd-line" style="height:420px;"></div>
+      <div id="rd-heat" style="height:420px; display:none;"></div>
+      <div class="muted" style="font-size:12px; margin-top:4px;">
+        Filter with the sliders below, or zoom/box-select on the Lines chart (x = time window,
+        y = W/kg band). Hover a legend name or table row to spotlight an athlete; click a row to pin.
+        Scores recompute from raw samples inside both filters. Smoothing is visual only.
+        <button class="btn secondary" type="button" id="rd-reset-filters"
+                style="font-size:12px; padding:2px 10px; margin-left:8px;">Reset filters</button>
+      </div>
+
+      <div style="display:flex; gap:28px; flex-wrap:wrap; margin-top:10px; align-items:flex-end;">
+        <div>
+          <div style="font-size:14px; font-weight:700; color:#0b0b0b;">Time window: <span id="rd-t-label"></span></div>
+          <div class="rd-dual-slider">
+            <div class="rd-dual-track"></div>
+            <div class="rd-dual-fill" id="rd-t-fill"></div>
+            <input type="range" id="rd-t0">
+            <input type="range" id="rd-t1">
+          </div>
+          <div style="display:flex; align-items:center; gap:5px; margin-top:6px;">
+            <input type="number" id="rd-t0-num" class="rd-num" step="0.1">
+            <span class="muted" style="font-size:12px;">&ndash;</span>
+            <input type="number" id="rd-t1-num" class="rd-num" step="0.1">
+            <span class="muted" style="font-size:12px;">min</span>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:14px; font-weight:700; color:#0b0b0b;">W/kg band: <span id="rd-y-label"></span></div>
+          <div class="rd-dual-slider">
+            <div class="rd-dual-track"></div>
+            <div class="rd-dual-fill" id="rd-y-fill"></div>
+            <input type="range" id="rd-y0">
+            <input type="range" id="rd-y1">
+          </div>
+          <div style="display:flex; align-items:center; gap:5px; margin-top:6px;">
+            <input type="number" id="rd-y0-num" class="rd-num" step="0.1">
+            <span class="muted" style="font-size:12px;">&ndash;</span>
+            <input type="number" id="rd-y1-num" class="rd-num" step="0.1">
+            <span class="muted" style="font-size:12px;">W/kg</span>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:14px; font-weight:700; color:#0b0b0b;">Smooth: <span id="rd-smooth-label">3s</span></div>
+          <input type="range" id="rd-smooth" min="0" max="15" step="1" value="3" style="width:130px;">
+        </div>
+      </div>
+
+      <div style="margin-top:12px;">
+        <div class="muted" style="font-size:13px; margin-bottom:4px;">Fine-tune trim (seconds cut from each rider's start/end)</div>
+        <table style="border-collapse:collapse; font-size:0.85rem;">
+          <tbody>
+          {% for a in payload.athletes %}
+            <tr>
+              <td style="padding:2px 10px 2px 0; white-space:nowrap;">
+                <span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:{{ a.color }}; margin-right:6px;"></span>{{ a.name }}
+              </td>
+              <td style="padding:2px 6px;">start
+                <input type="number" class="rd-trim" data-athlete="{{ a.athlete_id }}" data-edge="start"
+                       value="0" min="0" step="5" style="width:70px;"></td>
+              <td style="padding:2px 6px;">end
+                <input type="number" class="rd-trim" data-athlete="{{ a.athlete_id }}" data-edge="end"
+                       value="0" min="0" step="5" style="width:70px;"></td>
+              <td class="muted" style="padding:2px 6px; font-size:12px;">
+                auto-trimmed {{ a.auto_trim.lead_s }}s lead / {{ a.auto_trim.trail_s }}s tail
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="flex: 0 1 420px; min-width:340px;">
+      <div id="rd-radar" style="height:380px;"></div>
+      <div id="rd-score-note" class="muted" style="font-size:12px;"></div>
+      <table style="width:100%; border-collapse:collapse; font-size:0.9rem; margin-top:8px;">
+        <thead>
+          <tr class="muted" style="text-align:left;">
+            <th style="padding:4px 8px 4px 0;">Athlete</th>
+            <th style="padding:4px 8px 4px 0;">Avg W/kg</th>
+            <th style="padding:4px 8px 4px 0;">Avg W</th>
+            <th style="padding:4px 8px 4px 0;">Score</th>
+          </tr>
+        </thead>
+        <tbody id="rd-score-rows"></tbody>
+      </table>
+      <div class="muted" style="font-size:12px; margin-top:6px;">
+        Score = group-normalized average W/kg over the filtered window, mapped so the group
+        mean is 50 and &plusmn;3 SD span 0&ndash;100. Higher = harder ride.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script id="rd-data" type="application/json">{{ payload | tojson }}</script>
+<script>
+(function () {
+  if (typeof Plotly === 'undefined') return;
+  var RD = JSON.parse(document.getElementById('rd-data').textContent);
+  var lineEl = document.getElementById('rd-line');
+  var heatEl = document.getElementById('rd-heat');
+  var radarEl = document.getElementById('rd-radar');
+  if (!lineEl || !radarEl || !RD.athletes || !RD.athletes.length) return;
+
+  var INK = '#0b0b0b', INK2 = '#52514e', MUTED = '#898781', GRID = '#e2e8f0';
+  /* Single-hue sequential ramp (light -> dark blue) for the heatmap */
+  var SEQ = [
+    [0, '#cde2fb'], [0.17, '#9ec5f4'], [0.33, '#6da7ec'], [0.5, '#3987e5'],
+    [0.67, '#256abf'], [0.83, '#184f95'], [1, '#0d366b']
+  ];
+
+  /* Manual trim offsets (seconds off each rider's start/end), keyed by athlete id */
+  var trims = {};
+  RD.athletes.forEach(function (a) { trims[a.athlete_id] = { start: 0, end: 0 }; });
+
+  /* Current crossfilter window: x in minutes (displayed axis), y in W/kg.
+     null = unfiltered on that edge. Single source of truth for scores,
+     written only by the plotly_relayout handler (sliders and box-zoom both
+     funnel through Plotly.relayout on the Lines chart). */
+  var win = { x0: null, x1: null, y0: null, y1: null };
+  var bounds = { tMax: 1, yMax: 1 };
+  var smoothSec = 3;
+  var heatVisible = false;
+  var pinned = null;   /* index of the spotlight-pinned athlete, or null */
+
+  /* Displayed series per athlete after manual trim, x re-zeroed to minutes */
+  function displayedSeries(a) {
+    var tr = trims[a.athlete_id];
+    var lo = tr.start, hi = a.duration_s - tr.end;
+    var x = [], y = [];
+    for (var i = 0; i < a.t.length; i++) {
+      var t = a.t[i];
+      if (t < lo || t > hi) continue;
+      x.push((t - lo) / 60.0);
+      y.push(a.wkg[i]);
+    }
+    return { x: x, y: y };
+  }
+
+  var series = RD.athletes.map(displayedSeries);
+
+  function computeBounds() {
+    var tMax = 0, yMax = 0;
+    series.forEach(function (s) {
+      if (s.x.length) tMax = Math.max(tMax, s.x[s.x.length - 1]);
+      s.y.forEach(function (v) { if (v != null && v > yMax) yMax = v; });
+    });
+    bounds.tMax = Math.max(0.1, Math.ceil(tMax * 10) / 10);
+    bounds.yMax = Math.max(0.1, Math.ceil(yMax * 10) / 10);
+  }
+
+  /* Short "F. Lastname" labels so radar spokes / heatmap rows don't clip */
+  function shortName(full) {
+    var parts = (full || '').trim().split(/\s+/);
+    if (parts.length < 2) return full;
+    return parts[0].charAt(0) + '. ' + parts.slice(1).join(' ');
+  }
+
+  /* Visual-only smoothing: centered rolling mean over ~sec seconds (window
+     size derived from the series' median sample spacing). Never feeds scores. */
+  function smoothSeries(x, y, sec) {
+    if (sec <= 0 || x.length < 3) return y;
+    var dts = [];
+    for (var i = 1; i < x.length; i++) dts.push(x[i] - x[i - 1]);
+    dts.sort(function (a, b) { return a - b; });
+    var dtMin = dts[Math.floor(dts.length / 2)] || (1 / 60);
+    var half = Math.max(1, Math.round((sec / 60) / dtMin / 2));
+    var out = new Array(y.length);
+    for (var i = 0; i < y.length; i++) {
+      var sum = 0, cnt = 0;
+      for (var j = Math.max(0, i - half); j <= Math.min(y.length - 1, i + half); j++) {
+        if (y[j] != null) { sum += y[j]; cnt++; }
+      }
+      out[i] = cnt > 0 ? sum / cnt : null;
+    }
+    return out;
+  }
+
+  /* ── Lines view ───────────────────────────────────────────────────────── */
+
+  function lineFigure() {
+    var data = RD.athletes.map(function (a, i) {
+      return {
+        type: 'scatter', mode: 'lines', name: a.name,
+        x: series[i].x, y: smoothSeries(series[i].x, series[i].y, smoothSec),
+        line: { color: a.color, width: 2 },
+        connectgaps: false,
+        hovertemplate: '%{y:.2f} W/kg<extra>' + a.name + '</extra>'
+      };
+    });
+    var annotations = [];
+    if (RD.athletes.length <= 4) {
+      data.forEach(function (tr, i) {
+        if (!tr.x.length) return;
+        annotations.push({
+          x: tr.x[tr.x.length - 1], y: tr.y[tr.y.length - 1],
+          text: RD.athletes[i].name, xanchor: 'left', showarrow: false,
+          font: { size: 11, color: INK2 }
+        });
+      });
+    }
+    var layout = {
+      margin: { l: 55, r: 70, t: 10, b: 40 },
+      paper_bgcolor: 'white', plot_bgcolor: 'white',
+      xaxis: { title: 'Time (min)', gridcolor: GRID, zeroline: false, color: MUTED, titlefont: { color: INK2 } },
+      yaxis: { title: 'Power (W/kg)', gridcolor: GRID, zeroline: false, color: MUTED, titlefont: { color: INK2 } },
+      legend: { orientation: 'h', y: 1.08, font: { color: INK2 } },
+      hovermode: 'x unified',
+      annotations: annotations,
+      uirevision: 'rd',   /* keep zoom state across smoothing redraws */
+      font: { color: INK }
+    };
+    return { data: data, layout: layout };
+  }
+
+  function drawLine() {
+    var fig = lineFigure();
+    Plotly.react(lineEl, fig.data, fig.layout, {
+      responsive: true, displayModeBar: true,
+      modeBarButtonsToRemove: ['toImage', 'sendDataToCloud', 'lasso2d', 'select2d']
+    });
+    spotlight(pinned);   /* react resets trace opacity */
+  }
+
+  /* ── Spotlight ────────────────────────────────────────────────────────── */
+
+  function spotlight(idx) {
+    var ops = RD.athletes.map(function (_, i) { return (idx == null || i === idx) ? 1 : 0.15; });
+    Plotly.restyle(lineEl, { opacity: ops });
+  }
+
+  /* Plotly has no legend-hover event; hook the rendered legend item nodes.
+     Re-attached after every render (plotly_afterplot) — wired up in the boot
+     section, since lineEl.on() only exists once Plotly has initialized. */
+  function attachLegendSpotlight() {
+    var items = lineEl.querySelectorAll('.legend .traces');
+    items.forEach(function (node, idx) {
+      if (node.dataset.rdSpot) return;
+      node.dataset.rdSpot = '1';
+      node.addEventListener('mouseenter', function () { if (pinned == null) spotlight(idx); });
+      node.addEventListener('mouseleave', function () { if (pinned == null) spotlight(null); });
+    });
+  }
+
+  /* ── Heatmap view (alternate viewpoint of the same smoothed data) ─────── */
+
+  function buildHeatData() {
+    var cols = 600;
+    var step = bounds.tMax / cols;
+    var xs = [];
+    for (var c = 0; c <= cols; c++) xs.push(c * step);
+    var names = [], z = [];
+    /* reverse so the first athlete reads top-down */
+    for (var i = RD.athletes.length - 1; i >= 0; i--) {
+      var s = series[i];
+      var ysm = smoothSeries(s.x, s.y, smoothSec);
+      var row = new Array(xs.length).fill(null);
+      if (s.x.length) {
+        var j = 0;
+        for (var c2 = 0; c2 < xs.length; c2++) {
+          var xv = xs[c2];
+          if (xv < s.x[0] - step || xv > s.x[s.x.length - 1] + step) continue;
+          while (j < s.x.length - 1 && s.x[j + 1] <= xv) j++;
+          var jj = (j < s.x.length - 1 && Math.abs(s.x[j + 1] - xv) < Math.abs(s.x[j] - xv)) ? j + 1 : j;
+          row[c2] = ysm[jj];
+        }
+      }
+      names.push(shortName(RD.athletes[i].name));
+      z.push(row);
+    }
+    return { x: xs, y: names, z: z };
+  }
+
+  function renderHeat() {
+    var hm = buildHeatData();
+    var trace = {
+      type: 'heatmap', x: hm.x, y: hm.y, z: hm.z,
+      colorscale: SEQ, zmin: 0, zmax: bounds.yMax,
+      hoverongaps: false,
+      hovertemplate: '%{y} &bull; %{x:.1f} min: %{z:.2f} W/kg<extra></extra>',
+      colorbar: { title: { text: 'W/kg', font: { color: INK2, size: 11 } }, thickness: 12, tickfont: { color: MUTED, size: 10 } }
+    };
+    var layout = {
+      margin: { l: 100, r: 20, t: 10, b: 40 },
+      paper_bgcolor: 'white', plot_bgcolor: 'white',
+      /* Time window from the shared crossfilter; zoom is driven by the
+         sliders / Lines chart only (fixedrange avoids sync loops). */
+      xaxis: { title: 'Time (min)', range: [win.x0 != null ? win.x0 : 0, win.x1 != null ? win.x1 : bounds.tMax],
+               fixedrange: true, color: MUTED, titlefont: { color: INK2 } },
+      yaxis: { fixedrange: true, color: INK2, automargin: true, tickfont: { size: 11 } },
+      font: { color: INK }
+    };
+    Plotly.react(heatEl, [trace], layout, { displayModeBar: false, responsive: true });
+  }
+
+  function refreshHeat() { if (heatVisible) renderHeat(); }
+
+  /* View toggle */
+  var btnLines = document.getElementById('rd-view-lines');
+  var btnHeat = document.getElementById('rd-view-heat');
+  function setView(heat) {
+    heatVisible = heat;
+    lineEl.style.display = heat ? 'none' : '';
+    heatEl.style.display = heat ? '' : 'none';
+    btnLines.style.fontWeight = heat ? '' : '700';
+    btnHeat.style.fontWeight = heat ? '700' : '';
+    if (heat) { renderHeat(); }
+    else { Plotly.Plots.resize(lineEl); }
+  }
+  btnLines.addEventListener('click', function () { setView(false); });
+  btnHeat.addEventListener('click', function () { setView(true); });
+
+  /* ── Scores ───────────────────────────────────────────────────────────── */
+
+  /* Mean RAW W/kg per athlete over the current window/band; null if no samples */
+  function computeValues() {
+    return RD.athletes.map(function (a, i) {
+      var s = series[i], sum = 0, cnt = 0;
+      for (var j = 0; j < s.x.length; j++) {
+        var x = s.x[j], y = s.y[j];
+        if (y == null) continue;
+        if (win.x0 != null && x < win.x0) continue;
+        if (win.x1 != null && x > win.x1) continue;
+        if (win.y0 != null && y < win.y0) continue;
+        if (win.y1 != null && y > win.y1) continue;
+        sum += y; cnt++;
+      }
+      return cnt > 0 ? sum / cnt : null;
+    });
+  }
+
+  /* Mirrors app/services/race_difficulty.py::compute_scores (sample stdev). */
+  function computeScores(values) {
+    var present = values.filter(function (v) { return v != null; });
+    var degenerate = function () {
+      return values.map(function (v) { return v != null ? 50.0 : null; });
+    };
+    if (present.length < 2) return degenerate();
+    var mean = present.reduce(function (a, b) { return a + b; }, 0) / present.length;
+    var varSum = present.reduce(function (a, b) { return a + (b - mean) * (b - mean); }, 0);
+    var sd = Math.sqrt(varSum / (present.length - 1));
+    if (sd === 0) return degenerate();
+    var lower = mean - 3 * sd, denom = (6 * sd) / 100.0;
+    return values.map(function (v) {
+      if (v == null) return null;
+      return Math.max(0, Math.min(100, (v - lower) / denom));
+    });
+  }
+
+  function renderRadar(scores) {
+    var theta = [], r = [], colors = [];
+    RD.athletes.forEach(function (a, i) {
+      if (scores[i] == null) return;
+      theta.push(shortName(a.name)); r.push(scores[i]); colors.push(a.color);
+    });
+    if (theta.length) { theta.push(theta[0]); r.push(r[0]); colors.push(colors[0]); }
+    var trace = {
+      type: 'scatterpolar', mode: 'lines+markers',
+      theta: theta, r: r,
+      line: { color: MUTED, width: 2 },
+      fill: 'toself', fillcolor: 'rgba(42,120,214,0.10)',
+      marker: { color: colors, size: 9 },
+      hovertemplate: '%{theta}: %{r:.0f}<extra></extra>'
+    };
+    var layout = {
+      margin: { l: 85, r: 85, t: 30, b: 30 },
+      paper_bgcolor: 'white',
+      polar: {
+        bgcolor: 'white',
+        radialaxis: { range: [0, 100], gridcolor: GRID, color: MUTED, angle: 90, tickangle: 90 },
+        angularaxis: { gridcolor: GRID, color: INK2, tickfont: { size: 11 } }
+      },
+      showlegend: false,
+      font: { color: INK }
+    };
+    Plotly.react(radarEl, [trace], layout, { displayModeBar: false, responsive: true });
+  }
+
+  function renderTable(values, scores) {
+    var rows = RD.athletes.map(function (a, i) {
+      var v = values[i] != null ? values[i].toFixed(2) : '—';
+      /* wkg was computed as power/weight, so mean watts = mean wkg × weight */
+      var w = values[i] != null ? (values[i] * a.weight_kg).toFixed(0) : '—';
+      var s = scores[i] != null ? scores[i].toFixed(0) : '—';
+      var bg = (pinned === i) ? ' background:#eef4fd;' : '';
+      return '<tr class="rd-score-row" data-idx="' + i + '" style="border-top:1px solid ' + GRID + '; cursor:pointer;' + bg + '">' +
+        '<td style="padding:4px 8px 4px 0;"><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:' + a.color + '; margin-right:6px;"></span>' + a.name + '</td>' +
+        '<td style="padding:4px 8px 4px 0; font-variant-numeric: tabular-nums;">' + v + '</td>' +
+        '<td style="padding:4px 8px 4px 0; font-variant-numeric: tabular-nums;">' + w + '</td>' +
+        '<td style="padding:4px 8px 4px 0; font-variant-numeric: tabular-nums;"><b>' + s + '</b></td></tr>';
+    });
+    var body = document.getElementById('rd-score-rows');
+    body.innerHTML = rows.join('');
+    body.querySelectorAll('tr.rd-score-row').forEach(function (tr) {
+      var i = parseInt(tr.dataset.idx, 10);
+      tr.addEventListener('mouseenter', function () { if (pinned == null) spotlight(i); });
+      tr.addEventListener('mouseleave', function () { if (pinned == null) spotlight(null); });
+      tr.addEventListener('click', function () {
+        pinned = (pinned === i) ? null : i;
+        spotlight(pinned);
+        body.querySelectorAll('tr.rd-score-row').forEach(function (row) {
+          row.style.background = (pinned !== null && parseInt(row.dataset.idx, 10) === pinned) ? '#eef4fd' : '';
+        });
+      });
+    });
+
+    var note = document.getElementById('rd-score-note');
+    var present = values.filter(function (v) { return v != null; });
+    if (present.length < 2) {
+      note.textContent = 'Fewer than 2 athletes have samples in the current filter — scores default to 50.';
+    } else {
+      var allEqual = present.every(function (v) { return v === present[0]; });
+      note.textContent = allEqual ? 'All athletes identical in this window — scores default to 50.' : '';
+    }
+  }
+
+  function recompute() {
+    var values = computeValues();
+    var scores = computeScores(values);
+    renderRadar(scores);
+    renderTable(values, scores);
+  }
+
+  /* ── Range sliders (dual-handle: two overlapping inputs per axis) ──────── */
+  var sT0 = document.getElementById('rd-t0'), sT1 = document.getElementById('rd-t1');
+  var sY0 = document.getElementById('rd-y0'), sY1 = document.getElementById('rd-y1');
+  var fillT = document.getElementById('rd-t-fill'), fillY = document.getElementById('rd-y-fill');
+  var numT0 = document.getElementById('rd-t0-num'), numT1 = document.getElementById('rd-t1-num');
+  var numY0 = document.getElementById('rd-y0-num'), numY1 = document.getElementById('rd-y1-num');
+
+  function fmtMin(m) {
+    var mm = Math.floor(m), ss = Math.round((m - mm) * 60);
+    if (ss === 60) { mm++; ss = 0; }
+    return mm + ':' + (ss < 10 ? '0' : '') + ss;
+  }
+
+  function initSliders() {
+    [sT0, sT1, numT0, numT1].forEach(function (s) { s.min = 0; s.max = bounds.tMax; s.step = 0.1; });
+    [sY0, sY1, numY0, numY1].forEach(function (s) { s.min = 0; s.max = bounds.yMax; s.step = 0.1; });
+  }
+
+  /* Draw the fill bar between the (possibly out-of-order, mid-drag) low/high
+     handle values, as a percentage of the slider's own min/max span. */
+  function updateFill(sMin, sMax, fillEl) {
+    var lo = Math.min(parseFloat(sMin.value), parseFloat(sMax.value));
+    var hi = Math.max(parseFloat(sMin.value), parseFloat(sMax.value));
+    var span = parseFloat(sMin.max) - parseFloat(sMin.min);
+    var pctLo = span > 0 ? (lo - parseFloat(sMin.min)) / span * 100 : 0;
+    var pctHi = span > 0 ? (hi - parseFloat(sMin.min)) / span * 100 : 100;
+    fillEl.style.left = pctLo + '%';
+    fillEl.style.width = Math.max(0, pctHi - pctLo) + '%';
+  }
+
+  /* Cheap, non-debounced visual sync: fill bars + number boxes mirror
+     whatever the range inputs currently hold (mid-drag or settled). Runs on
+     every 'input' event so dragging feels immediate even though the actual
+     filter commit (Plotly.relayout) is debounced below. */
+  function syncSliderVisuals() {
+    updateFill(sT0, sT1, fillT);
+    updateFill(sY0, sY1, fillY);
+    var tLo = Math.min(parseFloat(sT0.value), parseFloat(sT1.value));
+    var tHi = Math.max(parseFloat(sT0.value), parseFloat(sT1.value));
+    var yLo = Math.min(parseFloat(sY0.value), parseFloat(sY1.value));
+    var yHi = Math.max(parseFloat(sY0.value), parseFloat(sY1.value));
+    numT0.value = tLo.toFixed(1); numT1.value = tHi.toFixed(1);
+    numY0.value = yLo.toFixed(1); numY1.value = yHi.toFixed(1);
+    document.getElementById('rd-t-label').textContent = fmtMin(tLo) + ' – ' + fmtMin(tHi);
+    document.getElementById('rd-y-label').textContent = yLo.toFixed(1) + ' – ' + yHi.toFixed(1) + ' W/kg';
+  }
+
+  /* Reflect the current window (from box-zoom, reset, or a trim change) into
+     the sliders + labels. Programmatic value changes don't fire 'input', so
+     this can't recurse into itself via the slider handlers. */
+  function updateSliderUI() {
+    var x0 = win.x0 != null ? win.x0 : 0, x1 = win.x1 != null ? win.x1 : bounds.tMax;
+    var y0 = win.y0 != null ? win.y0 : 0, y1 = win.y1 != null ? win.y1 : bounds.yMax;
+    sT0.value = x0; sT1.value = x1; sY0.value = y0; sY1.value = y1;
+    syncSliderVisuals();
+  }
+
+  /* Whichever handle was last grabbed draws on top, so two thumbs sitting at
+     (or near) the same value can still both be dragged. */
+  function bringToFront(el, sibling) { el.style.zIndex = 2; sibling.style.zIndex = 1; }
+  sT0.addEventListener('pointerdown', function () { bringToFront(sT0, sT1); });
+  sT1.addEventListener('pointerdown', function () { bringToFront(sT1, sT0); });
+  sY0.addEventListener('pointerdown', function () { bringToFront(sY0, sY1); });
+  sY1.addEventListener('pointerdown', function () { bringToFront(sY1, sY0); });
+
+  var sliderTimer = null;
+  function commitWindow() {
+    var x0 = parseFloat(sT0.value), x1 = parseFloat(sT1.value);
+    var y0 = parseFloat(sY0.value), y1 = parseFloat(sY1.value);
+    if (x0 > x1) { var tx = x0; x0 = x1; x1 = tx; }
+    if (y0 > y1) { var ty = y0; y0 = y1; y1 = ty; }
+    /* Funnel through Plotly.relayout so chart, win, and labels all update
+       via the single relayout handler. */
+    Plotly.relayout(lineEl, { 'xaxis.range': [x0, x1], 'yaxis.range': [y0, y1] });
+  }
+  function onSlider() {
+    syncSliderVisuals();
+    clearTimeout(sliderTimer);
+    sliderTimer = setTimeout(commitWindow, 120);
+  }
+  [sT0, sT1, sY0, sY1].forEach(function (s) { s.addEventListener('input', onSlider); });
+
+  /* Number boxes: typed values apply immediately (no drag to debounce). */
+  function onNumBox(numEl, rangeEl) {
+    return function () {
+      var v = parseFloat(numEl.value);
+      if (!isFinite(v)) v = parseFloat(rangeEl.value);
+      v = Math.min(parseFloat(rangeEl.max), Math.max(parseFloat(rangeEl.min), v));
+      rangeEl.value = v;
+      syncSliderVisuals();
+      clearTimeout(sliderTimer);
+      commitWindow();
+    };
+  }
+  [[numT0, sT0], [numT1, sT1], [numY0, sY0], [numY1, sY1]].forEach(function (pair) {
+    pair[0].addEventListener('change', onNumBox(pair[0], pair[1]));
+    pair[0].addEventListener('keydown', function (e) { if (e.key === 'Enter') pair[0].blur(); });
+  });
+
+  /* Smoothing slider: redraws the charts only (uirevision keeps the zoom) */
+  var sSmooth = document.getElementById('rd-smooth');
+  var smoothTimer = null;
+  sSmooth.addEventListener('input', function () {
+    document.getElementById('rd-smooth-label').textContent = sSmooth.value + 's';
+    clearTimeout(smoothTimer);
+    smoothTimer = setTimeout(function () {
+      smoothSec = parseFloat(sSmooth.value) || 0;
+      drawLine();
+      refreshHeat();
+    }, 120);
+  });
+
+  /* ── Boot ─────────────────────────────────────────────────────────────── */
+  computeBounds();
+  initSliders();
+  updateSliderUI();
+  drawLine();
+  recompute();
+  lineEl.on('plotly_afterplot', attachLegendSpotlight);
+  attachLegendSpotlight();   /* initial render's afterplot already fired */
+
+  /* Crossfilter: box-zoom AND slider-driven relayouts both land here.
+     Interactive zooms arrive as 'xaxis.range[0]'; programmatic ones as an
+     'xaxis.range' array — handle both. */
+  function edgeVal(ed, axis, idx) {
+    var arr = ed[axis + '.range'];
+    if (arr != null && arr[idx] != null) return arr[idx];
+    var v = ed[axis + '.range[' + idx + ']'];
+    return v != null ? v : null;
+  }
+
+  lineEl.on('plotly_relayout', function (ed) {
+    if (ed['xaxis.autorange']) { win.x0 = null; win.x1 = null; }
+    if (ed['yaxis.autorange']) { win.y0 = null; win.y1 = null; }
+    var v;
+    if ((v = edgeVal(ed, 'xaxis', 0)) != null) win.x0 = v;
+    if ((v = edgeVal(ed, 'xaxis', 1)) != null) win.x1 = v;
+    if ((v = edgeVal(ed, 'yaxis', 0)) != null) win.y0 = v;
+    if ((v = edgeVal(ed, 'yaxis', 1)) != null) win.y1 = v;
+    updateSliderUI();
+    recompute();
+    refreshHeat();
+  });
+
+  document.getElementById('rd-reset-filters').addEventListener('click', function () {
+    Plotly.relayout(lineEl, { 'xaxis.autorange': true, 'yaxis.autorange': true });
+  });
+
+  /* Manual trim: client-side only; resets the crossfilter (axes autorange) */
+  var trimTimer = null;
+  document.querySelectorAll('input.rd-trim').forEach(function (input) {
+    input.addEventListener('input', function () {
+      clearTimeout(trimTimer);
+      trimTimer = setTimeout(function () {
+        document.querySelectorAll('input.rd-trim').forEach(function (el) {
+          var id = parseInt(el.dataset.athlete, 10);
+          var v = parseFloat(el.value);
+          if (!isFinite(v) || v < 0) v = 0;
+          trims[id][el.dataset.edge] = v;
+        });
+        series = RD.athletes.map(displayedSeries);
+        computeBounds();
+        initSliders();
+        win = { x0: null, x1: null, y0: null, y1: null };
+        updateSliderUI();
+        drawLine();
+        Plotly.relayout(lineEl, { 'xaxis.autorange': true, 'yaxis.autorange': true });
+        recompute();
+        refreshHeat();
+      }, 150);
+    });
+  });
+})();
+</script>
+{% elif not warnings %}
+<div class="card"><p class="muted">Nothing to analyze.</p></div>
+{% endif %}

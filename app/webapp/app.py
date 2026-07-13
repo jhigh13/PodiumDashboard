@@ -57,6 +57,7 @@ from app.utils.dates import get_effective_today
 from app.utils.settings import settings
 from app.scheduling.scheduler import start_scheduler, stop_scheduler
 from app.webapp.routes_compare import register_compare_routes
+from app.webapp.routes_race_difficulty import register_race_difficulty_routes
 
 
 templates = Jinja2Templates(directory="app/webapp/templates")
@@ -3014,6 +3015,8 @@ def create_app() -> FastAPI:
             template = "partials/coach_tab_prediction.html"
         elif tab_norm in {"lab_export", "lab", "workout_simulation"}:
             template = "partials/coach_tab_lab_export.html"
+        elif tab_norm in {"difficulty", "race_difficulty"}:
+            template = "partials/coach_tab_difficulty.html"
         else:
             raise HTTPException(status_code=400, detail="Invalid tab")
 
@@ -3026,8 +3029,11 @@ def create_app() -> FastAPI:
             "default_start": today - timedelta(days=14),
         }
 
-        # Lab Export tab needs the coach's roster for the athlete dropdown.
-        if template.endswith("coach_tab_lab_export.html"):
+        if template.endswith("coach_tab_difficulty.html"):
+            ctx["years"] = list(range(today.year, today.year - 7, -1))
+
+        # Lab Export / Race Difficulty tabs need the coach's roster for their selectors.
+        if template.endswith(("coach_tab_lab_export.html", "coach_tab_difficulty.html")):
             session_role = request.session.get("role") or "athlete"
             coach_id = request.session.get("athlete_id")
             if session_role == "coach" and coach_id:
@@ -4439,6 +4445,7 @@ def create_app() -> FastAPI:
         return HTMLResponse(html)
 
     register_compare_routes(app, templates)
+    register_race_difficulty_routes(app, templates, require_coach=require_coach)
 
     return app
 

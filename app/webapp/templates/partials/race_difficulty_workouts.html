@@ -1,0 +1,66 @@
+<div class="card">
+  <h4 style="margin-top:0;">Bike files &mdash; {{ event.event_name }} <span class="muted">({{ event.event_date }})</span></h4>
+  <div class="muted" style="font-size:13px; margin-bottom:10px;">
+    TrainingPeaks workouts within &plusmn;1 day of the race, best bike match preselected.
+    Weight is prefilled from TrainingPeaks data when available &mdash; correct it to race weight.
+  </div>
+
+  <form id="rd-workouts-form" style="margin:0;">
+    <input type="hidden" name="race_key" value="{{ race_key }}">
+    <table style="width:100%; border-collapse:collapse; font-size:0.9rem;">
+      <thead>
+        <tr class="muted" style="text-align:left;">
+          <th style="padding:4px 8px 4px 0;">Include</th>
+          <th style="padding:4px 8px 4px 0;">Athlete</th>
+          <th style="padding:4px 8px 4px 0;">Workout</th>
+          <th style="padding:4px 8px 4px 0;">Weight (kg)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr style="border-top:1px solid #e2e8f0;">
+          <td style="padding:6px 8px 6px 0;">
+            <input type="checkbox" name="include_{{ row.athlete_id }}"
+                   {% if row.default_workout_id %}checked{% endif %}>
+          </td>
+          <td style="padding:6px 8px 6px 0; white-space:nowrap;">{{ row.name }}</td>
+          <td style="padding:6px 8px 6px 0;">
+            {% if row.workouts %}
+              <select name="workout_{{ row.athlete_id }}" style="max-width:420px;">
+                {% for w in row.workouts %}
+                  <option value="{{ w.workout_id }}" {% if w.workout_id == row.default_workout_id %}selected{% endif %}>{{ w.label }}</option>
+                {% endfor %}
+              </select>
+            {% else %}
+              <span class="muted">No files found</span>
+            {% endif %}
+            {% if row.warning %}
+              <div class="muted" style="color:#b45309; font-size:12px;">&#9888; {{ row.warning }}</div>
+            {% endif %}
+          </td>
+          <td style="padding:6px 8px 6px 0;">
+            <input type="number" name="weight_{{ row.athlete_id }}" step="0.1" min="30" max="120"
+                   value="{{ row.weight_kg if row.weight_kg is not none else '' }}"
+                   placeholder="kg" style="width:80px;">
+            {% if row.weight_kg is none %}
+              <div class="muted" style="font-size:12px;">enter manually</div>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div style="display:flex; gap:12px; align-items:center; margin-top:12px;">
+      <button class="btn" type="button" id="rd-analyze-btn"
+        hx-get="/partials/race_difficulty/analysis"
+        hx-include="#rd-controls, #rd-workouts-form"
+        hx-target="#rd-analysis"
+        hx-swap="innerHTML"
+        hx-indicator="#rd-analyze-spinner"
+      >Analyze</button>
+      <span id="rd-analyze-spinner" class="htmx-indicator muted">Loading power streams&hellip; first load can take a minute.</span>
+    </div>
+  </form>
+</div>
+<div id="rd-analysis" hx-swap-oob="true"></div>
