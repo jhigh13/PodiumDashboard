@@ -57,6 +57,7 @@ from app.utils.dates import get_effective_today
 from app.utils.settings import settings
 from app.scheduling.scheduler import start_scheduler, stop_scheduler
 from app.webapp.routes_compare import register_compare_routes
+from app.webapp.routes_medals import register_medal_routes
 from app.webapp.routes_race_difficulty import register_race_difficulty_routes
 
 
@@ -4445,6 +4446,7 @@ def create_app() -> FastAPI:
         return HTMLResponse(html)
 
     register_compare_routes(app, templates)
+    register_medal_routes(app, templates)
     register_race_difficulty_routes(app, templates, require_coach=require_coach)
 
     return app

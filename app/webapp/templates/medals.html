@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="margin-bottom:12px;">
+  <h2 style="margin:0 0 4px; color:#c8102e;">Medal Table</h2>
+  <p class="muted" style="margin:0; font-size:13px;">
+    World Triathlon podium medals by country. Filter by gender, time period, race category and para vs elite.
+    <a href="/compare" style="font-size:12px;">← Athlete Compare</a>
+  </p>
+</div>
+
+<!-- Filters -->
+<form class="card" id="medal-filters" style="padding:14px 16px;"
+      hx-get="/partials/medals" hx-target="#medal-results" hx-swap="innerHTML"
+      hx-trigger="change" hx-indicator="#medal-loading">
+  <div style="display:flex; flex-wrap:wrap; gap:20px 28px; align-items:center;">
+    <div>
+      <div class="filter-label">Gender</div>
+      <div class="seg-control">
+        <label><input type="radio" name="gender" value="all" {% if gender == 'all' %}checked{% endif %}>All</label>
+        <label><input type="radio" name="gender" value="men" {% if gender == 'men' %}checked{% endif %}>Men</label>
+        <label><input type="radio" name="gender" value="women" {% if gender == 'women' %}checked{% endif %}>Women</label>
+      </div>
+    </div>
+
+    <div>
+      <div class="filter-label">Time period</div>
+      <select name="since">
+        {% for value, label in since_options %}
+          <option value="{{ value }}" {% if value == since %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div>
+      <div class="filter-label">Field</div>
+      <label class="toggle-pill">
+        <input type="checkbox" name="para" value="true" {% if para %}checked{% endif %}>
+        <span>Para athletes</span>
+      </label>
+    </div>
+
+    <div style="margin-left:auto;">
+      <span id="medal-loading" class="htmx-indicator muted" style="font-size:12px;">Updating…</span>
+    </div>
+  </div>
+
+  <div style="margin-top:14px;">
+    <div class="filter-label">Race category <span class="muted" style="font-weight:500; text-transform:none; letter-spacing:0;">(none selected = all)</span></div>
+    <div>
+      {% for key, label in category_options %}
+        <label class="filter-pill">
+          <input type="checkbox" name="cats" value="{{ key }}" {% if key in cats %}checked{% endif %}>
+          {{ label }}
+        </label>
+      {% endfor %}
+    </div>
+  </div>
+</form>
+
+<div id="medal-results">
+  {% include "partials/medals_results.html" %}
+</div>
+
+<style>
+  .filter-label {
+    font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--muted); margin-bottom:6px;
+  }
+
+  /* Segmented gender control */
+  .seg-control { display:inline-flex; border:1px solid var(--border-strong); border-radius:999px; overflow:hidden; }
+  .seg-control label { padding:7px 18px; font-size:13px; font-weight:650; cursor:pointer; color:var(--muted); user-select:none; }
+  .seg-control label + label { border-left:1px solid var(--border-strong); }
+  .seg-control input { display:none; }
+  .seg-control label:has(input:checked) { background:var(--btn); color:#fff; }
+
+  /* Category checkbox pills */
+  .filter-pill {
+    display:inline-flex; align-items:center; gap:6px;
+    padding:6px 12px; margin:2px 6px 2px 0;
+    border:1px solid var(--border-strong); border-radius:999px;
+    font-size:13px; font-weight:600; cursor:pointer; user-select:none; background:var(--card);
+  }
+  .filter-pill:has(input:checked) { background:#dbeafe; border-color:#2563eb; color:#1e3a8a; }
+  .filter-pill input { margin:0; }
+
+  /* Para toggle pill */
+  .toggle-pill {
+    display:inline-flex; align-items:center; gap:8px; padding:7px 14px;
+    border:1px solid var(--border-strong); border-radius:999px;
+    font-size:13px; font-weight:650; cursor:pointer; user-select:none; background:var(--card);
+  }
+  .toggle-pill:has(input:checked) { background:#e0e7ff; border-color:#4f46e5; color:#3730a3; }
+
+  /* Podium */
+  .podium-title { font-size:13px; font-weight:800; letter-spacing:.02em; text-align:center; margin-bottom:12px; }
+  .podium { display:grid; grid-template-columns:repeat(3,1fr); align-items:end; gap:12px; padding:0 4px; }
+  .podium-col { display:flex; flex-direction:column; align-items:center; justify-content:flex-end; }
+  .podium-country { font-weight:700; font-size:14px; text-align:center; margin-bottom:4px; min-height:34px; display:flex; align-items:flex-end; }
+  .podium-metric { font-size:26px; font-weight:900; line-height:1; margin-bottom:8px; }
+  .podium-metric-unit { font-size:13px; font-weight:700; color:var(--muted); }
+  .podium-step { width:100%; border-radius:10px 10px 0 0; display:flex; align-items:flex-start; justify-content:center; padding-top:8px; box-shadow: inset 0 2px 0 rgba(255,255,255,.45); }
+  .step-1 { height:96px; } .step-2 { height:70px; } .step-3 { height:52px; }
+  .podium-rank { font-size:24px; font-weight:900; color:rgba(0,0,0,.5); }
+  .pstep-gold   { background:linear-gradient(180deg,#f6d365,#e8b923); }
+  .pstep-silver { background:linear-gradient(180deg,#d7dee8,#a9b4c2); }
+  .pstep-bronze { background:linear-gradient(180deg,#e0a267,#c8823c); }
+  .pstep-empty  { background:var(--border); }
+  .podium-breakdown { display:flex; gap:6px; margin-top:8px; font-size:12px; font-weight:800; font-variant-numeric:tabular-nums; }
+  .chip-g,.chip-s,.chip-b { padding:1px 8px; border-radius:999px; }
+  .chip-g { background:#fdf1c9; color:#7a5c05; }
+  .chip-s { background:#eceff3; color:#48515e; }
+  .chip-b { background:#f6e3d2; color:#7a4a1f; }
+
+  /* Stacked bars */
+  .mt-legend { display:flex; gap:14px; font-size:12px; color:var(--muted); font-weight:600; }
+  .mt-legend .sw { display:inline-block; width:11px; height:11px; border-radius:3px; margin-right:5px; vertical-align:middle; }
+  .sw-gold { background:#e8b923; } .sw-silver { background:#a9b4c2; } .sw-bronze { background:#c8823c; }
+  .mt-bars { display:flex; flex-direction:column; gap:6px; }
+  .mt-bar-row { display:grid; grid-template-columns:130px 1fr; align-items:center; gap:12px; }
+  .mt-bar-country { font-size:12.5px; font-weight:650; text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mt-bar-track { display:flex; align-items:center; gap:8px; }
+  .mt-bar-fill { display:flex; height:20px; border-radius:5px; overflow:hidden; min-width:2px; }
+  .mt-bar-fill .seg { height:100%; }
+  .seg-gold { background:#e8b923; } .seg-silver { background:#a9b4c2; } .seg-bronze { background:#c8823c; }
+  .mt-bar-total { font-size:12.5px; font-weight:800; font-variant-numeric:tabular-nums; color:var(--muted); }
+
+  /* Full table */
+  .mt-table td.num, .mt-table th.num { text-align:center; font-variant-numeric:tabular-nums; }
+  .mt-table th.num { width:64px; }
+</style>
+{% endblock %}

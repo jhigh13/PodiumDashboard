@@ -1,0 +1,137 @@
+{# Medal-table results fragment: two podiums + stacked bar breakdown + full table.
+   Styles live in medals.html (not swapped) so they persist across HTMX updates. #}
+{% if no_db %}
+  <div class="card"><p class="muted">Triathlon database not configured.</p></div>
+{% elif not table or not table.has_data %}
+  <div class="card">
+    <p class="muted" style="margin:0;">No medals match these filters. Try widening the time period or clearing a category.</p>
+  </div>
+{% else %}
+
+  <p class="muted" style="text-align:center; margin:2px 0 14px; font-size:13px;">
+    <strong>{{ table.total_medals }}</strong> medals ·
+    <strong>{{ table.n_countries }}</strong> countries ·
+    {{ 'Para' if para else 'Elite' }} ·
+    {% if gender == 'men' %}Men{% elif gender == 'women' %}Women{% else %}Men &amp; Women{% endif %} ·
+    {{ since_label }}
+    {% if cats %} ·
+      {% for c in cats %}{{ category_labels[c] }}{% if not loop.last %}, {% endif %}{% endfor %}
+    {% endif %}
+  </p>
+
+  {# ---- Podiums ---------------------------------------------------------- #}
+  <div class="row" style="margin-bottom:16px;">
+    <div class="col card" style="flex:1 1 420px;">
+      <div class="podium-title">🏅 Top 3 — Total Medals</div>
+      {% set top = table.rows[:3] %}
+      {% set order = [ (top[1] if top|length > 1 else None, 2, 'silver'),
+                       (top[0] if top|length > 0 else None, 1, 'gold'),
+                       (top[2] if top|length > 2 else None, 3, 'bronze') ] %}
+      <div class="podium">
+        {% for row, place, cls in order %}
+          <div class="podium-col">
+            {% if row %}
+              <div class="podium-country">{{ row.country }}</div>
+              <div class="podium-metric">{{ row.total }}</div>
+              <div class="podium-step step-{{ place }} pstep-{{ cls }}">
+                <span class="podium-rank">{{ place }}</span>
+              </div>
+              <div class="podium-breakdown">
+                <span class="chip-g">{{ row.gold }}</span>
+                <span class="chip-s">{{ row.silver }}</span>
+                <span class="chip-b">{{ row.bronze }}</span>
+              </div>
+            {% else %}
+              <div class="podium-step step-{{ place }} pstep-empty"></div>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="col card" style="flex:1 1 420px;">
+      <div class="podium-title">🥇 Top 3 — Gold Medals</div>
+      {% set topg = table.by_gold[:3] %}
+      {% set orderg = [ (topg[1] if topg|length > 1 else None, 2, 'silver'),
+                        (topg[0] if topg|length > 0 else None, 1, 'gold'),
+                        (topg[2] if topg|length > 2 else None, 3, 'bronze') ] %}
+      <div class="podium">
+        {% for row, place, cls in orderg %}
+          <div class="podium-col">
+            {% if row %}
+              <div class="podium-country">{{ row.country }}</div>
+              <div class="podium-metric">{{ row.gold }}<span class="podium-metric-unit"> G</span></div>
+              <div class="podium-step step-{{ place }} pstep-{{ cls }}">
+                <span class="podium-rank">{{ place }}</span>
+              </div>
+              <div class="podium-breakdown">
+                <span class="chip-g">{{ row.gold }}</span>
+                <span class="chip-s">{{ row.silver }}</span>
+                <span class="chip-b">{{ row.bronze }}</span>
+              </div>
+            {% else %}
+              <div class="podium-step step-{{ place }} pstep-empty"></div>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  {# ---- Stacked bar breakdown ------------------------------------------- #}
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px;">
+      <h3 style="margin:0;">Medals by Country</h3>
+      <div class="mt-legend">
+        <span><i class="sw sw-gold"></i>Gold</span>
+        <span><i class="sw sw-silver"></i>Silver</span>
+        <span><i class="sw sw-bronze"></i>Bronze</span>
+      </div>
+    </div>
+    <div class="mt-bars">
+      {% for row in table.rows %}
+        <div class="mt-bar-row">
+          <div class="mt-bar-country" title="{{ row.country }}">{{ row.country }}</div>
+          <div class="mt-bar-track">
+            <div class="mt-bar-fill" style="width: {{ (row.total / table.max_total * 100) | round(2) }}%;">
+              {% if row.gold %}<div class="seg seg-gold" style="flex: {{ row.gold }} 0 0;" title="{{ row.gold }} gold"></div>{% endif %}
+              {% if row.silver %}<div class="seg seg-silver" style="flex: {{ row.silver }} 0 0;" title="{{ row.silver }} silver"></div>{% endif %}
+              {% if row.bronze %}<div class="seg seg-bronze" style="flex: {{ row.bronze }} 0 0;" title="{{ row.bronze }} bronze"></div>{% endif %}
+            </div>
+            <div class="mt-bar-total">{{ row.total }}</div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# ---- Full table ------------------------------------------------------ #}
+  <div class="card">
+    <h3 style="margin:0 0 8px;">Full Medal Table</h3>
+    <table class="mt-table">
+      <thead>
+        <tr>
+          <th style="width:44px;">#</th>
+          <th>Country</th>
+          <th class="num">🥇</th>
+          <th class="num">🥈</th>
+          <th class="num">🥉</th>
+          <th class="num">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in table.rows %}
+          <tr>
+            <td class="muted">{{ loop.index }}</td>
+            <td style="font-weight:650;">{{ row.country }}</td>
+            <td class="num">{{ row.gold }}</td>
+            <td class="num">{{ row.silver }}</td>
+            <td class="num">{{ row.bronze }}</td>
+            <td class="num" style="font-weight:800;">{{ row.total }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+{% endif %}
