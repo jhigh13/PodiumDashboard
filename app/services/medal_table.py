@@ -41,8 +41,16 @@ SINCE_OPTIONS: dict[str, int | None] = {
     "1y": 1, "2y": 2, "3y": 3, "4y": 4, "5y": 5, "8y": 8,
 }
 
-# Able-bodied senior programs that count toward the (non-para) medal table.
-# Junior / U23 / Mixed Relay are intentionally excluded from the elite table.
+FIELD_KEYS: tuple[str, ...] = ("elite", "junior", "para")
+FIELD_LABELS: dict[str, str] = {
+    "elite": "Elite",
+    "junior": "Junior",
+    "para": "Para",
+}
+DEFAULT_FIELDS: frozenset[str] = frozenset({"elite"})
+
+# Able-bodied senior programs that count toward the elite medal table.
+# U23 / Mixed Relay are not currently bucketed into any field option.
 _ELITE_PROGS = ("elite men", "elite women")
 
 # Medal colours (also referenced by the template, kept here as the source of truth)
@@ -151,6 +159,7 @@ def _fetch_all_medals(engine: Engine) -> pd.DataFrame:
     df["prog_lower"] = df["prog_name"].astype(str).str.strip().str.lower()
     df["is_para"] = df["prog_lower"].str.startswith("pt")
     df["is_elite"] = df["prog_lower"].isin(_ELITE_PROGS)
+    df["is_junior"] = df["prog_lower"].str.contains("junior", na=False)
     df["category"] = [
         classify_medal_category(en, pn)
         for en, pn in zip(df["event_name"], df["prog_name"])
@@ -183,22 +192,30 @@ def build_medal_table(
     gender: str = "all",
     years_back: int | None = None,
     categories: set[str] | None = None,
-    para: bool = False,
+    fields: set[str] | None = None,
     use_cache: bool = True,
 ) -> MedalTable:
     """Assemble the filtered country medal table."""
     df = _get_medals_df(engine, use_cache=use_cache)
+    flds = fields if fields else set(DEFAULT_FIELDS)
     filters = {
         "gender": gender, "years_back": years_back,
-        "categories": sorted(categories) if categories else [], "para": para,
+        "categories": sorted(categories) if categories else [], "fields": sorted(flds),
     }
     if df is None or df.empty:
         return MedalTable([], [], 0, 0, 0, 0, filters)
 
     m = df
 
-    # Program set: para classes vs able-bodied senior elite
-    m = m[m["is_para"]] if para else m[m["is_elite"]]
+    # Field: elite / junior / para are independent buckets, OR'd together
+    mask = pd.Series(False, index=m.index)
+    if "elite" in flds:
+        mask |= m["is_elite"]
+    if "junior" in flds:
+        mask |= m["is_junior"]
+    if "para" in flds:
+        mask |= m["is_para"]
+    m = m[mask]
 
     # Gender
     if gender == "men":

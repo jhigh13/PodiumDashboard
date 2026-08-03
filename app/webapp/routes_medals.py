@@ -13,6 +13,9 @@ from app.data.triathlon_db import get_triathlon_engine
 from app.services.medal_table import (
     CATEGORY_KEYS,
     CATEGORY_LABELS,
+    DEFAULT_FIELDS,
+    FIELD_KEYS,
+    FIELD_LABELS,
     GENDER_KEYS,
     SINCE_OPTIONS,
     build_medal_table,
@@ -32,7 +35,7 @@ _SINCE_LABELS: dict[str, str] = {
 }
 
 
-def _normalize_categories(values: list[str] | None) -> set[str]:
+def _normalize_keys(values: list[str] | None, valid: tuple[str, ...]) -> set[str]:
     if not values:
         return set()
     out: set[str] = set()
@@ -41,12 +44,12 @@ def _normalize_categories(values: list[str] | None) -> set[str]:
             continue
         for piece in str(raw).split(","):
             v = piece.strip().lower()
-            if v in CATEGORY_KEYS:
+            if v in valid:
                 out.add(v)
     return out
 
 
-def _context(gender: str, since: str, cats: set[str], para: bool) -> dict:
+def _context(gender: str, since: str, cats: set[str], fields: set[str]) -> dict:
     engine = get_triathlon_engine()
     no_db = engine is None
     table = None
@@ -56,8 +59,9 @@ def _context(gender: str, since: str, cats: set[str], para: bool) -> dict:
             gender=gender,
             years_back=SINCE_OPTIONS.get(since),
             categories=cats or None,
-            para=para,
+            fields=fields or None,
         )
+    field_labels = " + ".join(FIELD_LABELS[f] for f in FIELD_KEYS if f in fields)
     return {
         "table": table,
         "no_db": no_db,
@@ -65,24 +69,27 @@ def _context(gender: str, since: str, cats: set[str], para: bool) -> dict:
         "since": since,
         "since_label": _SINCE_LABELS.get(since, "All time"),
         "cats": cats,
-        "para": para,
+        "fields": fields,
+        "field_label": field_labels or FIELD_LABELS["elite"],
         "gender_options": GENDER_KEYS,
         "category_options": [(k, CATEGORY_LABELS[k]) for k in CATEGORY_KEYS],
         "category_labels": CATEGORY_LABELS,
+        "field_options": [(k, FIELD_LABELS[k]) for k in FIELD_KEYS],
         "since_options": list(_SINCE_LABELS.items()),
     }
 
 
 def register_medal_routes(app: FastAPI, templates: Jinja2Templates) -> None:
 
-    def _parse(gender: str | None, since: str | None, cats, para):
+    def _parse(gender: str | None, since: str | None, cats, fields):
         g = (gender or "all").strip().lower()
         if g not in GENDER_KEYS:
             g = "all"
         s = (since or "").strip().lower()
         if s not in SINCE_OPTIONS:
             s = ""
-        return g, s, _normalize_categories(cats), bool(para)
+        f = _normalize_keys(fields, FIELD_KEYS) or set(DEFAULT_FIELDS)
+        return g, s, _normalize_keys(cats, CATEGORY_KEYS), f
 
     @app.get("/medals", response_class=HTMLResponse)
     def medals_page(
@@ -90,10 +97,10 @@ def register_medal_routes(app: FastAPI, templates: Jinja2Templates) -> None:
         gender: str | None = None,
         since: str | None = None,
         cats: list[str] = Query(default=[]),
-        para: bool = False,
+        fields: list[str] = Query(default=[]),
     ):
-        g, s, c, p = _parse(gender, since, cats, para)
-        ctx = _context(g, s, c, p)
+        g, s, c, f = _parse(gender, since, cats, fields)
+        ctx = _context(g, s, c, f)
         ctx.update({"request": request, "title": "Medal Table"})
         return templates.TemplateResponse("medals.html", ctx)
 
@@ -103,10 +110,10 @@ def register_medal_routes(app: FastAPI, templates: Jinja2Templates) -> None:
         gender: str | None = None,
         since: str | None = None,
         cats: list[str] = Query(default=[]),
-        para: bool = False,
+        fields: list[str] = Query(default=[]),
     ):
-        g, s, c, p = _parse(gender, since, cats, para)
-        ctx = _context(g, s, c, p)
+        g, s, c, f = _parse(gender, since, cats, fields)
+        ctx = _context(g, s, c, f)
         ctx["request"] = request
         return templates.TemplateResponse(
             "partials/medals_results.html", ctx, headers=CACHE_HEADERS,

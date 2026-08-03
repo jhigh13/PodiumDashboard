@@ -11,7 +11,7 @@
   <p class="muted" style="text-align:center; margin:2px 0 14px; font-size:13px;">
     <strong>{{ table.total_medals }}</strong> medals ·
     <strong>{{ table.n_countries }}</strong> countries ·
-    {{ 'Para' if para else 'Elite' }} ·
+    {{ field_label }} ·
     {% if gender == 'men' %}Men{% elif gender == 'women' %}Women{% else %}Men &amp; Women{% endif %} ·
     {{ since_label }}
     {% if cats %} ·
