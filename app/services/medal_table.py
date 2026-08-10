@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+import re
 from threading import Lock
 import time as _time
 
@@ -64,14 +65,30 @@ BRONZE = "#c8823c"
 # an added ``olympic`` bucket for the Olympic/Paralympic Games).
 # ---------------------------------------------------------------------------
 
-_CONTINENTAL_PATTERNS = (
-    "continental championship", "continental cup",
-    "patco", "atu", "otu", "astc", "etu", "natu",
-    "americas championship", "asian championship", "african championship",
-    "european championship", "oceania championship", "european cup",
-    "americas triathlon cup", "asia triathlon cup", "africa triathlon cup",
-    "oceania triathlon cup", "european triathlon cup",
+# World Triathlon has renamed race tiers over the years — e.g. "ITU Triathlon
+# World Cup" (pre-2021) became "World Triathlon Cup" (word order flipped), and
+# continental cups picked up qualifiers like "Premium" ("Africa Triathlon
+# Premium Cup"). Patterns below are regexes so they tolerate both word order
+# and inserted words, rather than requiring an exact literal substring.
+_CONTINENTAL_PATTERNS = ("continental championship", "continental cup")
+
+# Old regional-federation acronyms (ETU, OTU, ATU, ASTC, NATU, PATCO) must be
+# matched as whole words — a plain substring check false-matches city names
+# like "Huatulco" (contains "atu"), which previously miscategorized races.
+_CONTINENTAL_ACRONYM_RE = re.compile(r"\b(patco|atu|otu|astc|etu|natu)\b")
+
+# Continent name ... "cup"/"championship(s)" anywhere later in the string —
+# covers "Europe Triathlon Cup", "Africa Triathlon Premium Cup",
+# "Oceania Triathlon Sprint Championships", etc.
+_CONTINENTAL_PHRASE_RE = re.compile(
+    r"\b(europe|european|africa|african|asia|asian|americas|oceania)\b"
+    r".*\b(cup|championships?)\b"
 )
+
+# "World ... Cup" anywhere in the string — covers both the old "ITU
+# Triathlon World Cup" ordering and the current "World Triathlon Cup" one
+# (checked only after WTCS/Olympic have already been ruled out above).
+_WORLD_CUP_RE = re.compile(r"\bworld\b.*\bcup\b")
 
 
 def classify_medal_category(event_name: object, prog_name: object) -> str:
@@ -85,9 +102,13 @@ def classify_medal_category(event_name: object, prog_name: object) -> str:
         "championship series", "championship finals", "grand final", "wtcs",
     )):
         return "wtcs"
-    if "world cup" in blob:
+    if _WORLD_CUP_RE.search(blob):
         return "world_cup"
-    if any(s in blob for s in _CONTINENTAL_PATTERNS):
+    if (
+        _CONTINENTAL_ACRONYM_RE.search(blob)
+        or _CONTINENTAL_PHRASE_RE.search(blob)
+        or any(s in blob for s in _CONTINENTAL_PATTERNS)
+    ):
         return "continental"
     return "other"
 
