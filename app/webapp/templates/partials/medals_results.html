@@ -78,6 +78,25 @@
     </div>
   </div>
 
+  {# ---- Medal trend over time --------------------------------------------- #}
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:2px;">
+      <h3 style="margin:0;">Medals per Year by Country</h3>
+      {% if trend and trend.other_included %}
+        <span class="muted" style="font-size:12px;">Top {{ trend.series|length }} of {{ trend.n_countries_total }} countries</span>
+      {% endif %}
+    </div>
+    <p class="muted" style="margin:0 0 10px; font-size:12px;">
+      Medal count per year (not cumulative) &mdash; full history under the Gender / Field / Race category filters above.
+      Not affected by the Time period filter.
+    </p>
+    {% if trend and trend.has_data %}
+      <div id="chart-medal-trend" data-fig="{{ trend_fig_json | e }}" style="height:380px;"></div>
+    {% else %}
+      <p class="muted" style="margin:0;">Not enough data to chart a trend for these filters.</p>
+    {% endif %}
+  </div>
+
   {# ---- Stacked bar breakdown ------------------------------------------- #}
   <div class="card">
     <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px;">
@@ -105,33 +124,53 @@
     </div>
   </div>
 
-  {# ---- Full table ------------------------------------------------------ #}
+  {# ---- Full table (click a country to see its medalists) ---------------- #}
   <div class="card">
-    <h3 style="margin:0 0 8px;">Full Medal Table</h3>
-    <table class="mt-table">
-      <thead>
-        <tr>
-          <th style="width:44px;">#</th>
-          <th>Country</th>
-          <th class="num">🥇</th>
-          <th class="num">🥈</th>
-          <th class="num">🥉</th>
-          <th class="num">Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in table.rows %}
-          <tr>
-            <td class="muted">{{ loop.index }}</td>
-            <td style="font-weight:650;">{{ row.country }}</td>
-            <td class="num">{{ row.gold }}</td>
-            <td class="num">{{ row.silver }}</td>
-            <td class="num">{{ row.bronze }}</td>
-            <td class="num" style="font-weight:800;">{{ row.total }}</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <h3 style="margin:0 0 4px;">Full Medal Table</h3>
+    <p class="muted" style="margin:0 0 8px; font-size:12px;">Click a country to see its individual medalists.</p>
+    <div class="mt-grid">
+      <div class="mt-grid-row mt-grid-head">
+        <div></div>
+        <div>Country</div>
+        <div class="num">🥇</div>
+        <div class="num">🥈</div>
+        <div class="num">🥉</div>
+        <div class="num">Total</div>
+        <div class="num">Athletes</div>
+      </div>
+      {% for row in table.rows %}
+        <details class="mt-country-details">
+          <summary class="mt-grid-row">
+            <span class="mt-chevron muted">▸</span>
+            <span style="font-weight:650;">{{ row.country }}</span>
+            <span class="num">{{ row.gold }}</span>
+            <span class="num">{{ row.silver }}</span>
+            <span class="num">{{ row.bronze }}</span>
+            <span class="num" style="font-weight:800;">{{ row.total }}</span>
+            <span class="num" title="{{ '%.1f'|format(row.medals_per_athlete) }} medals per athlete">
+              {{ row.athletes }}
+              {%- if row.athletes %} <span class="muted" style="font-weight:500;">({{ '%.1f'|format(row.medals_per_athlete) }}/ea)</span>{% endif %}
+            </span>
+          </summary>
+          <div class="mt-country-detail"
+               hx-get="/partials/medals/country/{{ row.country | urlencode }}?{{ filter_qs }}"
+               hx-trigger="toggle once from:closest details"
+               hx-swap="innerHTML">
+            <p class="muted" style="margin:6px 12px;">Loading…</p>
+          </div>
+        </details>
+      {% endfor %}
+    </div>
   </div>
+
+  <script>
+    (function () {
+      if (typeof Plotly === 'undefined') return;
+      var el = document.getElementById('chart-medal-trend');
+      if (!el || !el.dataset.fig) return;
+      var fig = JSON.parse(el.dataset.fig);
+      Plotly.react(el, fig.data, fig.layout, { displayModeBar: false, responsive: true });
+    })();
+  </script>
 
 {% endif %}

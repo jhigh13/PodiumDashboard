@@ -59,6 +59,20 @@ GOLD = "#e8b923"
 SILVER = "#a9b4c2"
 BRONZE = "#c8823c"
 
+# Categorical palette for the per-country trend line chart (validated
+# CVD-safe order for lines/adjacent-pair charts, up to 8 series).
+TREND_PALETTE: tuple[str, ...] = (
+    "#2a78d6",  # blue
+    "#eb6834",  # orange
+    "#1baf7a",  # aqua
+    "#eda100",  # yellow
+    "#e87ba4",  # magenta
+    "#008300",  # green
+    "#4a3aa7",  # violet
+    "#e34948",  # red
+)
+TREND_TOP_N = 8
+
 
 # ---------------------------------------------------------------------------
 # Category classification (name-based, same spirit as head_to_head.py but with
@@ -124,6 +138,25 @@ class MedalRow:
     gold: int
     silver: int
     bronze: int
+    athletes: int = 0   # count of distinct medalists behind these medals
+
+    @property
+    def total(self) -> int:
+        return self.gold + self.silver + self.bronze
+
+    @property
+    def medals_per_athlete(self) -> float:
+        """>1 means some athletes medaled more than once; 1.0 = every medal a different athlete."""
+        return (self.total / self.athletes) if self.athletes else 0.0
+
+
+@dataclass
+class AthleteMedalRow:
+    athlete_id: int
+    name: str
+    gold: int
+    silver: int
+    bronze: int
 
     @property
     def total(self) -> int:
@@ -145,12 +178,37 @@ class MedalTable:
         return bool(self.rows)
 
 
+@dataclass
+class MedalTrendSeries:
+    country: str
+    color: str
+    totals: list[int]     # per-year medal count, aligned to MedalTrend.years (NOT cumulative)
+
+
+@dataclass
+class MedalTrend:
+    years: list[int]
+    series: list[MedalTrendSeries]
+    n_countries_total: int        # how many countries had a medal at all under these filters
+    filters: dict = field(default_factory=dict)
+
+    @property
+    def has_data(self) -> bool:
+        return bool(self.years) and bool(self.series)
+
+    @property
+    def other_included(self) -> bool:
+        return self.n_countries_total > len(self.series)
+
+
 # ---------------------------------------------------------------------------
 # Fetch + cache
 # ---------------------------------------------------------------------------
 
 _MEDAL_SQL = text("""
     SELECT
+        a.athlete_id    AS athlete_id,
+        a.full_name     AS full_name,
         a.country       AS country,
         a.gender        AS gender,
         rr.finish_position AS pos,
@@ -207,6 +265,43 @@ def _get_medals_df(engine: Engine, *, use_cache: bool = True) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
+def _apply_field_gender_category(
+    m: pd.DataFrame,
+    *,
+    gender: str,
+    categories: set[str] | None,
+    fields: set[str],
+) -> pd.DataFrame:
+    """Shared filter core: field (elite/junior/para), gender, race category.
+
+    Time period is deliberately left out — callers apply it (or not) themselves,
+    since the trend view needs the full date range while the table view doesn't.
+    """
+    # Field: elite / junior / para are independent buckets, OR'd together
+    mask = pd.Series(False, index=m.index)
+    if "elite" in fields:
+        mask |= m["is_elite"]
+    if "junior" in fields:
+        mask |= m["is_junior"]
+    if "para" in fields:
+        mask |= m["is_para"]
+    m = m[mask]
+
+    # Gender
+    if gender == "men":
+        m = m[m["gender"] == "male"]
+    elif gender == "women":
+        m = m[m["gender"] == "female"]
+
+    # Race category (empty => all)
+    if categories:
+        cats = {c.strip().lower() for c in categories if c}
+        if cats:
+            m = m[m["category"].isin(cats)]
+
+    return m
+
+
 def build_medal_table(
     engine: Engine,
     *,
@@ -226,29 +321,7 @@ def build_medal_table(
     if df is None or df.empty:
         return MedalTable([], [], 0, 0, 0, 0, filters)
 
-    m = df
-
-    # Field: elite / junior / para are independent buckets, OR'd together
-    mask = pd.Series(False, index=m.index)
-    if "elite" in flds:
-        mask |= m["is_elite"]
-    if "junior" in flds:
-        mask |= m["is_junior"]
-    if "para" in flds:
-        mask |= m["is_para"]
-    m = m[mask]
-
-    # Gender
-    if gender == "men":
-        m = m[m["gender"] == "male"]
-    elif gender == "women":
-        m = m[m["gender"] == "female"]
-
-    # Race category (empty => all)
-    if categories:
-        cats = {c.strip().lower() for c in categories if c}
-        if cats:
-            m = m[m["category"].isin(cats)]
+    m = _apply_field_gender_category(df, gender=gender, categories=categories, fields=flds)
 
     # Time period
     if years_back is not None:
@@ -259,15 +332,20 @@ def build_medal_table(
     if m.empty:
         return MedalTable([], [], 0, 0, 0, 0, filters)
 
-    # Aggregate: one row per country with gold/silver/bronze counts
+    # Aggregate: one row per country with gold/silver/bronze counts + medalist depth
     agg = (
         m.assign(
             gold=(m["pos"] == 1).astype(int),
             silver=(m["pos"] == 2).astype(int),
             bronze=(m["pos"] == 3).astype(int),
         )
-        .groupby("country", as_index=False)[["gold", "silver", "bronze"]]
-        .sum()
+        .groupby("country", as_index=False)
+        .agg(
+            gold=("gold", "sum"),
+            silver=("silver", "sum"),
+            bronze=("bronze", "sum"),
+            athletes=("athlete_id", "nunique"),
+        )
     )
     agg["total"] = agg["gold"] + agg["silver"] + agg["bronze"]
 
@@ -282,7 +360,7 @@ def build_medal_table(
 
     def _to_rows(frame: pd.DataFrame) -> list[MedalRow]:
         return [
-            MedalRow(str(r.country), int(r.gold), int(r.silver), int(r.bronze))
+            MedalRow(str(r.country), int(r.gold), int(r.silver), int(r.bronze), int(r.athletes))
             for r in frame.itertuples(index=False)
         ]
 
@@ -298,3 +376,122 @@ def build_medal_table(
         max_gold=int(agg["gold"].max()),
         filters=filters,
     )
+
+
+def build_medal_trend(
+    engine: Engine,
+    *,
+    gender: str = "all",
+    categories: set[str] | None = None,
+    fields: set[str] | None = None,
+    top_n: int = TREND_TOP_N,
+    use_cache: bool = True,
+) -> MedalTrend:
+    """Per-year (non-cumulative) medal counts for the top-N countries.
+
+    Deliberately ignores the "since" time-period filter — a multi-year trend
+    is the point, so this always spans the full history available under the
+    other filters. Country order (and therefore color, assigned by position)
+    reflects each country's rank *within these filters*, so it can shift
+    between filter combinations — trade-off noted where this is rendered.
+    """
+    df = _get_medals_df(engine, use_cache=use_cache)
+    flds = fields if fields else set(DEFAULT_FIELDS)
+    filters = {
+        "gender": gender,
+        "categories": sorted(categories) if categories else [],
+        "fields": sorted(flds),
+    }
+    if df is None or df.empty:
+        return MedalTrend([], [], 0, filters)
+
+    m = _apply_field_gender_category(df, gender=gender, categories=categories, fields=flds)
+    m = m.dropna(subset=["event_date"])
+    if m.empty:
+        return MedalTrend([], [], 0, filters)
+
+    m = m.assign(year=m["event_date"].dt.year.astype(int))
+
+    totals_by_country = m.groupby("country").size().sort_values(ascending=False)
+    n_countries_total = len(totals_by_country)
+    top_countries = list(totals_by_country.index[:top_n])
+    if not top_countries:
+        return MedalTrend([], [], n_countries_total, filters)
+
+    years = sorted(m["year"].unique().tolist())
+
+    per_year = (
+        m[m["country"].isin(top_countries)]
+        .groupby(["country", "year"])
+        .size()
+    )
+
+    series = [
+        MedalTrendSeries(
+            country=country,
+            color=TREND_PALETTE[i % len(TREND_PALETTE)],
+            totals=[int(per_year.get((country, y), 0)) for y in years],
+        )
+        for i, country in enumerate(top_countries)
+    ]
+
+    return MedalTrend(
+        years=years,
+        series=series,
+        n_countries_total=n_countries_total,
+        filters=filters,
+    )
+
+
+def build_country_medalists(
+    engine: Engine,
+    country: str,
+    *,
+    gender: str = "all",
+    years_back: int | None = None,
+    categories: set[str] | None = None,
+    fields: set[str] | None = None,
+    use_cache: bool = True,
+) -> list[AthleteMedalRow]:
+    """Per-athlete medal breakdown for one country, under the same filters as
+    the main table — the drill-down behind each expandable row.
+    """
+    df = _get_medals_df(engine, use_cache=use_cache)
+    flds = fields if fields else set(DEFAULT_FIELDS)
+    if df is None or df.empty:
+        return []
+
+    m = _apply_field_gender_category(df, gender=gender, categories=categories, fields=flds)
+    m = m[m["country"] == country]
+
+    if years_back is not None:
+        today = date.today()
+        cutoff = today.replace(year=today.year - int(years_back))
+        m = m[m["event_date"].dt.date >= cutoff]
+
+    if m.empty:
+        return []
+
+    agg = (
+        m.assign(
+            gold=(m["pos"] == 1).astype(int),
+            silver=(m["pos"] == 2).astype(int),
+            bronze=(m["pos"] == 3).astype(int),
+        )
+        .groupby(["athlete_id", "full_name"], as_index=False)
+        .agg(gold=("gold", "sum"), silver=("silver", "sum"), bronze=("bronze", "sum"))
+    )
+    agg["total"] = agg["gold"] + agg["silver"] + agg["bronze"]
+    agg = agg.sort_values(
+        ["total", "gold", "silver", "full_name"],
+        ascending=[False, False, False, True],
+    )
+
+    return [
+        AthleteMedalRow(
+            athlete_id=int(r.athlete_id),
+            name=str(r.full_name) if r.full_name else "(unknown athlete)",
+            gold=int(r.gold), silver=int(r.silver), bronze=int(r.bronze),
+        )
+        for r in agg.itertuples(index=False)
+    ]

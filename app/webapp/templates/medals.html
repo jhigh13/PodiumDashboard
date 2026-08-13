@@ -122,8 +122,32 @@
   .seg-gold { background:#e8b923; } .seg-silver { background:#a9b4c2; } .seg-bronze { background:#c8823c; }
   .mt-bar-total { font-size:12.5px; font-weight:800; font-variant-numeric:tabular-nums; color:var(--muted); }
 
-  /* Full table */
-  .mt-table td.num, .mt-table th.num { text-align:center; font-variant-numeric:tabular-nums; }
-  .mt-table th.num { width:64px; }
+  /* Full table: expandable grid rows (country -> per-athlete drill-down) */
+  .mt-grid { display:flex; flex-direction:column; }
+  .mt-grid-row {
+    display:grid; grid-template-columns:22px 1fr 40px 40px 40px 56px 110px;
+    align-items:center; gap:8px; padding:8px 6px;
+  }
+  .mt-grid-head {
+    font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--muted); background:#f1f5f9; border-radius:8px 8px 0 0;
+  }
+  .mt-grid-row .num { text-align:center; font-variant-numeric:tabular-nums; }
+  .mt-country-details { border-bottom:1px solid var(--border); }
+  .mt-country-details summary { list-style:none; cursor:pointer; }
+  .mt-country-details summary::-webkit-details-marker { display:none; }
+  .mt-country-details summary:hover { background:#f8fafc; }
+  .mt-chevron { display:inline-block; transition:transform .15s; }
+  .mt-country-details[open] > summary .mt-chevron { transform:rotate(90deg); }
+  .mt-country-detail { padding:2px 0 10px 34px; }
+
+  /* Per-athlete drill-down rows */
+  .mt-athlete-list { display:flex; flex-direction:column; gap:4px; }
+  .mt-athlete-row {
+    display:flex; justify-content:space-between; align-items:center;
+    padding:5px 10px; border-radius:8px; background:#f8fafc; font-size:13px;
+  }
+  .mt-athlete-name { font-weight:600; }
+  .mt-athlete-medals { display:flex; align-items:center; gap:4px; }
 </style>
 {% endblock %}

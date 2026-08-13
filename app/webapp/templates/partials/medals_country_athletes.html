@@ -1,0 +1,18 @@
+{# Per-country medalist breakdown, loaded once when a Full Medal Table row is expanded. #}
+{% if not athletes %}
+  <p class="muted" style="margin:6px 12px 10px;">No individual medalist data for {{ country }} under these filters.</p>
+{% else %}
+  <div class="mt-athlete-list">
+    {% for a in athletes %}
+      <div class="mt-athlete-row">
+        <span class="mt-athlete-name">{{ a.name }}</span>
+        <span class="mt-athlete-medals">
+          <span class="chip-g">{{ a.gold }}</span>
+          <span class="chip-s">{{ a.silver }}</span>
+          <span class="chip-b">{{ a.bronze }}</span>
+          <span class="muted" style="margin-left:8px; font-weight:700;">{{ a.total }} total</span>
+        </span>
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}
